@@ -4,6 +4,7 @@ from os import listdir,makedirs
 from os.path import isfile,join,exists
 from collections import defaultdict
 from porter import Singleton,PorterStemmer
+import math
 
 stop_words = ['a','about','above','across','after','again','against','all','almost','alone','along','already','also','although','always','among','an','and','another','any','anybody','anyone','anything','anywhere','are','area','areas','around','as','ask','asked','asking','asks','at','away','b','back','backed','backing','backs','be','became','because','become','becomes','been','before','began','behind','being','beings','best','better','between','big','both','but','by','c','came','can','cannot','case','cases','certain','certainly','clear','clearly','come','could','d','did','differ','different','differently','do','does','done','down','down','downed','downing','downs','during','e','each','early','either','end','ended','ending','ends','enough','even','evenly','ever','every','everybody','everyone','everything','everywhere','f','face','faces','fact','facts','far','felt','few','find','finds','first','for','four','from','full','fully','further','furthered','furthering','furthers','g','gave','general','generally','get','gets','give','given','gives','go','going','good','goods','got','great','greater','greatest','group','grouped','grouping','groups','h','had','has','have','having','he','her','here','herself','high','high','high','higher','highest','him','himself','his','how','however','i','if','important','in','interest','interested','interesting','interests','into','is','it','its','itself','j','just','k','keep','keeps','kind','knew','know','known','knows','l','large','largely','last','later','latest','least','less','let','lets','like','likely','long','longer','longest','m','made','make','making','man','many','may','me','member','members','men','might','more','most','mostly','mr','mrs','much','must','my','myself','n','necessary','need','needed','needing','needs','never','new','new','newer','newest','next','no','nobody','non','noone','not','nothing','now','nowhere','number','numbers','o','of','off','often','old','older','oldest','on','once','one','only','open','opened','opening','opens','or','order','ordered','ordering','orders','other','others','our','out','over','p','part','parted','parting','parts','per','perhaps','place','places','point','pointed','pointing','points','possible','present','presented','presenting','presents','problem','problems','put','puts','q','quite','r','rather','really','right','right','room','rooms','s','said','same','saw','say','says','second','seconds','see','seem','seemed','seeming','seems','sees','several','shall','she','should','show','showed','showing','shows','side','sides','since','small','smaller','smallest','so','some','somebody','someone','something','somewhere','state','states','still','still','such','sure','t','take','taken','than','that','the','their','them','then','there','therefore','these','they','thing','things','think','thinks','this','those','though','thought','thoughts','three','through','thus','to','today','together','too','took','toward','turn','turned','turning','turns','two','u','under','until','up','upon','us','use','used','uses','v','very','w','want','wanted','wanting','wants','was','way','ways','we','well','wells','went','were','what','when','where','whether','which','while','who','whole','whose','why','will','with','within','without','work','worked','working','works','would','x','y','year','years','yet','you','young','younger','youngest','your','yours','z']
 
@@ -185,25 +186,26 @@ def dump_class_to_file(base_dir,fname,word_dict):
 		for i in range(len(result)):
 			f.write(str(result[i][0]) + "," + result[i][1]+"\n")
 
-def normalize(word_dict):
+def normalize(word_dict,word_frequency,tag,clean_files,words):
 	result = {}
 	for k,v in word_dict.iteritems():
 		sum_sq = 0
 		for fv,value in v:
-			sum_sq = sum_sq + (value*value)
+			p = (value * math.log((clean_files*1.0)/len(word_frequency[words[fv]][tag])))
+			sum_sq = sum_sq + p*p
 		sum_sq = sum_sq**0.5
 		result_vect = []
 		for fv,value in v:
-			result_vect.append((fv,round(value/sum_sq,6)))
+			result_vect.append((fv,value*1.0/sum_sq))
 		result[k] = result_vect
 	return result
 
-def dump_to_input_file(base_dir,fname,word_dict):
+def dump_to_input_file(base_dir,fname,word_dict,word_frequency,tag,clean_files,words):
 
 	if not exists(base_dir):
 		makedirs(base_dir)
 
-	word_dict = normalize(word_dict)
+	word_dict = normalize(word_dict,word_frequency,tag,clean_files,words)
 	with open(join(base_dir,fname),'w') as f:
 		for k,v in word_dict.iteritems():
 			v.sort()
@@ -295,7 +297,7 @@ def generate_feature_space(base_folder,ngrams,verbose,output_dir,stem,p):
 
 	dump_class_to_file(output_dir,'newsgroups.class',class_map)
 	dump_label_to_file(output_dir,'newsgroups.rlabel',class_map)
-	return (file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map)	
+	return (file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files)	
 
 """
 Purpose:- Convert each file to its Bag of words and Ngram representation
@@ -305,7 +307,7 @@ Parameters:- base_folder -> Directory from where to read the files
 			 feature_space -> dictionary whose key is ngram and value is all unqiue ngrams across all file in base_folder
 """
 
-def create_feature_vector(base_folder,verbose,output_base_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map):
+def create_feature_vector(base_folder,verbose,output_base_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files):
 	
 	"""
 	file_bow_dict -> dictionary whose key is filename and value is list of words that occur in the file
@@ -349,7 +351,7 @@ def create_feature_vector(base_folder,verbose,output_base_dir,ngrams,file_bow_di
 				output_feature_vector[filename].append((fv_dict[k],v))
 
 	#Normalize and then write
-	dump_to_input_file(output_base_dir,'bag.csv',output_feature_vector)	
+	dump_to_input_file(output_base_dir,'bag.csv',output_feature_vector,word_frequency,'bag',clean_files,feature_vector)	
 
 	output_feature_space = {}
 	for ngram in ngrams:
@@ -369,7 +371,7 @@ def create_feature_vector(base_folder,verbose,output_base_dir,ngrams,file_bow_di
 					output_feature_space[ngram][filename].append((output_ngram_dict[ngram][k],v))
 
 	for k,v in output_feature_space.iteritems():
-		dump_to_input_file(output_base_dir,"char"+str(k)+".csv",output_feature_space[k])
+		dump_to_input_file(output_base_dir,"char"+str(k)+".csv",output_feature_space[k],word_frequency,'char'+str(k),clean_files,feature_space[k])
 	
 total_args = len(sys.argv)
 base_folder = '20_newsgroups'
@@ -390,5 +392,5 @@ if total_args >=5:
 	if 0 == verbose:
 		verbose = False
 
-file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map = generate_feature_space(base_folder,ngrams,verbose,output_dir,stem,p)
-create_feature_vector(base_folder,verbose,output_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map)
+file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files = generate_feature_space(base_folder,ngrams,verbose,output_dir,stem,p)
+create_feature_vector(base_folder,verbose,output_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files)
