@@ -139,9 +139,9 @@ Parameters:- string,ngram
 Return Value:- list containing ngrams of size ngrams (character-based not word-based)
 """
 def get_ngram_representation(tokens,ngrams):
+	result = []
 	text = " ".join([x for x in tokens])
 	return [text[i-ngrams:i+1] for i,char in enumerate(text)][ngrams:]
-
 
 """
 Purpose:- Writing features(words) to file
@@ -236,7 +236,7 @@ Parameters:- base_folder -> Directory from where to read the files
 			 ngrams -> list specifying different length of ngrams
 			 verbose -> write intermediate output to stdout
 """
-def generate_feature_space(base_folder,ngrams,verbose,output_dir,stem,p):
+def generate_feature_space(base_folder,ngrams,output_dir,stem,p):
 	
 	file_bow_dict = {}
 	file_ngram_dict = {}
@@ -254,7 +254,6 @@ def generate_feature_space(base_folder,ngrams,verbose,output_dir,stem,p):
 	class_map = {}
 	feature_vector_trie = Trie()
 	feature_vector = []
-
 	word_frequency = {}
 
 	files = listdir(base_folder)
@@ -265,8 +264,6 @@ def generate_feature_space(base_folder,ngrams,verbose,output_dir,stem,p):
 			postings = listdir(data_file_path)
 			for input_file in postings:
 				file_path = join(join(base_folder,data_file),input_file)
-				if verbose:
-					print "Processing file " + str(file_path)
 				file_tokens = process(file_path,stem,p)
 				if file_tokens and len(file_tokens) > 0:
 					file_bow_dict[file_path] = file_tokens
@@ -307,30 +304,16 @@ Parameters:- base_folder -> Directory from where to read the files
 			 feature_space -> dictionary whose key is ngram and value is all unqiue ngrams across all file in base_folder
 """
 
-def create_feature_vector(base_folder,verbose,output_base_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files):
+def create_feature_vector(base_folder,output_base_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files):
 	
-	"""
-	file_bow_dict -> dictionary whose key is filename and value is list of words that occur in the file
-	feature_vector -> List of all unique words that appear across all files
-	file_ngram_dict -> dictionary whose key is filename and value is also dictionary whose keys are ngrams(3,5,7) and value list 
-					is list words corresponding corresponding to ngrams
-	feature_space -> dictionary whose key is ngrams(3,5,7) and value is list of all unique ngrams across all files
-	"""
-
 	if not exists(output_base_dir):
 		makedirs(output_base_dir)		
-
-	if verbose:
-		print "Creating word index mapping for bag of words model ..."
 
 	fv_dict = {}
 	for i,word in enumerate(feature_vector):
 		fv_dict[word] = i
 	
 	dump_features_to_file(output_base_dir,'bag.clabel',feature_vector)
-
-	if verbose:
-		print "Creating word index mapping for ngram approach ..."
 
 	output_ngram_dict = {}
 	for ngram in ngrams:
@@ -344,8 +327,7 @@ def create_feature_vector(base_folder,verbose,output_base_dir,ngrams,file_bow_di
 		filename = class_map[fname][0]
 		output_feature_vector[filename] = []
 		word_count = Counter(feature_vector_list)
-		if verbose:
-			print "Generate feature Vector for file " + str(fname) + " using bag of words model ...."
+		
 		for k,v in word_count.iteritems():
 			if k in fv_dict:
 				output_feature_vector[filename].append((fv_dict[k],v))
@@ -359,9 +341,7 @@ def create_feature_vector(base_folder,verbose,output_base_dir,ngrams,file_bow_di
 
 	for fname,ngram_dict in file_ngram_dict.iteritems():
 		filename = class_map[fname][0]
-		if verbose:
-			print "Generate feature Vector for file " + str(fname) + " using ngrams approach ...."
-
+		
 		for ngram,values in ngram_dict.iteritems():
 			if filename not in output_feature_space[ngram]:
 				output_feature_space[ngram][filename] = []
@@ -376,7 +356,6 @@ def create_feature_vector(base_folder,verbose,output_base_dir,ngrams,file_bow_di
 total_args = len(sys.argv)
 base_folder = '20_newsgroups'
 ngrams = [3,5,7]
-verbose = False
 output_dir = '.'
 stem = Singleton()
 p = PorterStemmer()
@@ -387,10 +366,6 @@ if total_args >= 3:
 	output_dir = sys.argv[2]
 if total_args >= 4:
 	ngrams = [int(sys.argv[3])]
-if total_args >=5:
-	verbose = sys.argv[4]
-	if 0 == verbose:
-		verbose = False
 
-file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files = generate_feature_space(base_folder,ngrams,verbose,output_dir,stem,p)
-create_feature_vector(base_folder,verbose,output_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files)
+file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files = generate_feature_space(base_folder,ngrams,output_dir,stem,p)
+create_feature_vector(base_folder,output_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files)
