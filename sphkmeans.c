@@ -6,7 +6,7 @@
 #include<time.h>
 #include<assert.h>
 
-#define STOP_LIMIT 5
+#define STOP_LIMIT 3
 #define MAX_OBJECTS 10000
 #define MAX_FEATURES 8000000
 #define MAX_CENTROIDS 100
@@ -45,6 +45,7 @@ int pre_object_id;
 int object_id;
 int feature_id;
 double frequency;
+double max_obj_value = 0.0;
 const double tolerance = 1e-5;
 
 void init()
@@ -65,32 +66,24 @@ void printCSR()
 void get_initial_centroids(int run)
 {
 	srand(run);
-	int min = 0;
-	int max = rowind-1;
-	int idx = 0;	
+	int n = rowind;
+	int rem = RAND_MAX%n;
+	int x = 0;
+	int idx = 0;
 	int ispresent = 0;
-
-	int r;
-    const unsigned int range = 1 + max - min;
-    const unsigned int buckets = RAND_MAX / range;
-    const unsigned int limit = buckets * range;
-
-    do
-    {
-        r = rand();
-		if(r<=limit)
+	while(idx<clusters)
+	{
+		do
 		{
-			r = min + (r/buckets);
-			ispresent = 0;
-			for(int i=0;i<idx && !ispresent;i++)
-			{
-				if(init_centroids[i]==r) ispresent = 1;
-			}
-			if(!ispresent) { init_centroids[idx] = r ; idx++;}
-		}
-
-    } while (idx<clusters);
-
+			x = rand();	
+		}while(x >= RAND_MAX - rem);
+		x = x%n;
+		ispresent = 0;
+		for(int i=0;i<idx && !ispresent;i++)
+			if(init_centroids[i]==x) ispresent = 1;
+		
+		if(!ispresent) { init_centroids[idx] = x ; idx++;}
+	}
 }
 
 void readInput(char *fname)
@@ -107,6 +100,7 @@ void readInput(char *fname)
 		TOTAL_FEATURES = max(TOTAL_FEATURES,feature_id);
 		colptr[colind] = feature_id;
 		values[colind] = frequency;
+		assert(frequency<=1.00);
 		colind++;
 		pre_object_id = object_id;
 	}
@@ -145,8 +139,13 @@ int get_best_cluster(int req_object_id)
 	{
 		dist = 0;
 		for(int j=rowptr[req_object_id];j<rowptr[req_object_id+1];j++)
+		{	
+			//if(0==req_object_id) printf("%.6lf %.6lf %d\n",centroids[i][colptr[j]],values[j],i);
 			dist = dist + centroids[i][colptr[j]]  * values[j] ;
-
+			assert(dist>=0.0);
+			assert(centroids[i][colptr[j]]<=1.00);
+			assert(values[j]<=1.00);
+		}
 		assert(dist>=0);	
 		assert(isnan(dist)==0);	
 		assert(normalizing_factor[i]>0);	
@@ -204,47 +203,67 @@ double do_clustering(int run)
 {
 	int cluster_id = 0;
 	srand(seeds[run]);
-	double pre_obj_value = 0.0;
 	double cur_obj_value = 0.0;
 	double csum = 0.0;	
 
 	get_initial_centroids(seeds[run]);
+	for(int i=0;i<clusters;i++) for(int j=0;j<=TOTAL_FEATURES;j++) centroids[i][j] = 0;
 	for(int i=0;i<clusters;i++)
 	{
 		object_id = init_centroids[i];
+		//printf("%d ",object_id);
 		for(int j=rowptr[object_id];j<rowptr[object_id+1];j++) 
 			centroids[i][colptr[j]] = values[j];
 		normalizing_factor[i] = 1.0;
 	}
-
+	/*
+	puts(" ------------- ");
+	for(int i=0;i<clusters;i++)
+	{
+		for(int j=rowptr[i];j<rowptr[i+1];j++)
+			printf("(%.6lf,%.6lf) ",centroids[i][colptr[j]],values[j]);
+		puts("");
+	}
+	puts(" -------------- ");
+	*/
 	for(int k=0;k<MAX_ITERATIONS;k++)
 	{
 		for(int i=0;i<rowind;i++)
 		{
 				cluster_id = get_best_cluster(i);
+		//		printf("%d %d\n",i,cluster_id);
 				cluster_map[i] = cluster_id;
-				for(int j=rowptr[i];j<rowptr[i+1];j++) tcentroids[cluster_id][colptr[j]] = tcentroids[cluster_id][colptr[j]] + values[j];
+				for(int j=rowptr[i];j<rowptr[i+1];j++) 
+					tcentroids[cluster_id][colptr[j]] = (tcentroids[cluster_id][colptr[j]]*cluster_count[cluster_id] + values[j])/(cluster_count[cluster_id]+1);
 				cluster_count[cluster_id] = cluster_count[cluster_id] + 1;
 		}
 		for(int i=0;i<clusters;i++)
 		{
-			if(k==0) assert(cluster_count[i]>0);
 			csum = 0.0;
+			
+			for(int j=0;j<=TOTAL_FEATURES;j++) csum = csum + tcentroids[i][j] * tcentroids[i][j];
+			
+			csum = sqrt(csum);
+			if(tolerance < csum) normalizing_factor[i] = csum;
+			else normalizing_factor[i] = 1.0;
+			cluster_count[i] = 0;
+		
+			assert(normalizing_factor[i] > 0);	
 			for(int j=0;j<=TOTAL_FEATURES;j++) 
 			{
-				if(cluster_count[i]>0) centroids[i][j] = tcentroids[i][j] / cluster_count[i];
-				else centroids[i][j]=0;
+				if(csum>0) centroids[i][j] = tcentroids[i][j]/normalizing_factor[i]; 
+				else centroids[i][j]=0.0;
 				tcentroids[i][j]=0;
-				csum = csum + centroids[i][j] * centroids[i][j];
 			}
-			csum = sqrt(csum);
-			if(csum <= tolerance) normalizing_factor[i]  = 1;
-			else normalizing_factor[i] = csum;
-			cluster_count[i] = 0;
 		}
 		
 		cur_obj_value = evaluate_objective_function();
-		printf("%.6lf\n",cur_obj_value);
+		//printf("%.6lf\n",cur_obj_value);
+		if(cur_obj_value + tolerance > max_obj_value)
+		{
+			max_obj_value = cur_obj_value;
+			for(int j=0;j<rowind;j++) best_cluster_map[j] = cluster_map[j];
+		}
 		if(shouldBreak(k,cur_obj_value))
 		{
 				printf("Breaking at %d iteration\n",k+1);
@@ -297,7 +316,6 @@ double compute_purity()
     {
         rsum = 0.0;
         csum = 0.0;
-        //for(int j=0;j<total_classes;j++) rsum = rsum + entropy_matrix[i][j];
         for(int j=0;j<total_classes;j++) csum = max(csum , entropy_matrix[i][j]);
         ans = ans + csum/rowind;
     }
@@ -321,7 +339,6 @@ char *get_entropy_file_name(char* entropy_fname,char *fname)
 
 int main(int argc,char **argv)
 {
-	double max_obj_value = 0.0;
 	double obj_value = 0.0;
 	init();
 	readInput(argv[1]);
@@ -334,14 +351,8 @@ int main(int argc,char **argv)
 	gettimeofday (&tv1, NULL);
     t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
 	for(int i=0;i<trials;i++)
-	{
 		obj_value = do_clustering(i);
-		if(obj_value > max_obj_value)
-		{
-			max_obj_value = obj_value;
-			for(int j=0;j<rowind;j++) best_cluster_map[j] = cluster_map[j];
-		}
-	}
+	
 	gettimeofday (&tv2, NULL);
     t2 = (double) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
 
