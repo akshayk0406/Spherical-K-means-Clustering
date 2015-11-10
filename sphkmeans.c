@@ -1,6 +1,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
+#include<sys/time.h>
 #include<math.h>
 #include<time.h>
 #include<assert.h>
@@ -145,7 +146,10 @@ int get_best_cluster(int req_object_id)
 		dist = 0;
 		for(int j=rowptr[req_object_id];j<rowptr[req_object_id+1];j++)
 			dist = dist + centroids[i][colptr[j]]  * values[j] ;
-		
+
+		assert(dist>=0);	
+		assert(isnan(dist)==0);	
+		assert(normalizing_factor[i]>0);	
 		dist = dist/normalizing_factor[i];
 		if( dist - max_similarity > tolerance )
 		{
@@ -170,6 +174,7 @@ double evaluate_objective_function()
 		for(int j=0;j<=TOTAL_FEATURES;j++) 
 		{
 			dist = dist + (objective_function[i][j]*objective_function[i][j]);
+			assert(dist>=0);
 			objective_function[i][j]=0;
 		}
 		ans = ans + sqrt(dist);
@@ -207,13 +212,9 @@ double do_clustering(int run)
 	for(int i=0;i<clusters;i++)
 	{
 		object_id = init_centroids[i];
-		csum = 0.0;
 		for(int j=rowptr[object_id];j<rowptr[object_id+1];j++) 
-		{
 			centroids[i][colptr[j]] = values[j];
-			csum = csum + values[j]*values[j];
-		}
-		normalizing_factor[i] = sqrt(csum);
+		normalizing_factor[i] = 1.0;
 	}
 
 	for(int k=0;k<MAX_ITERATIONS;k++)
@@ -227,18 +228,23 @@ double do_clustering(int run)
 		}
 		for(int i=0;i<clusters;i++)
 		{
+			if(k==0) assert(cluster_count[i]>0);
 			csum = 0.0;
 			for(int j=0;j<=TOTAL_FEATURES;j++) 
 			{
-				centroids[i][j] = tcentroids[i][j] / cluster_count[i];
+				if(cluster_count[i]>0) centroids[i][j] = tcentroids[i][j] / cluster_count[i];
+				else centroids[i][j]=0;
 				tcentroids[i][j]=0;
 				csum = csum + centroids[i][j] * centroids[i][j];
 			}
-			normalizing_factor[i]  = sqrt(csum);
+			csum = sqrt(csum);
+			if(csum <= tolerance) normalizing_factor[i]  = 1;
+			else normalizing_factor[i] = csum;
 			cluster_count[i] = 0;
 		}
 		
 		cur_obj_value = evaluate_objective_function();
+		printf("%.6lf\n",cur_obj_value);
 		if(shouldBreak(k,cur_obj_value))
 		{
 				printf("Breaking at %d iteration\n",k+1);
@@ -255,9 +261,8 @@ void write_output(char *fname)
 	fclose(fp);
 }
 
-void write_entropy_matrix()
+void write_entropy_matrix(char *entropy_fname)
 {
-	const char* entropy_fname = "entropy.txt";
 	FILE *fp = fopen(entropy_fname,"w");
 	for(int i=0;i<clusters;i++)
     {
@@ -292,11 +297,26 @@ double compute_purity()
     {
         rsum = 0.0;
         csum = 0.0;
-        for(int j=0;j<total_classes;j++) rsum = rsum + entropy_matrix[i][j];
+        //for(int j=0;j<total_classes;j++) rsum = rsum + entropy_matrix[i][j];
         for(int j=0;j<total_classes;j++) csum = max(csum , entropy_matrix[i][j]);
-        ans = ans + (csum*rsum)/rowind;
+        ans = ans + csum/rowind;
     }
     return ans;
+}
+
+char *get_entropy_file_name(char* entropy_fname,char *fname)
+{
+	char clus[10],trial[10];
+	sprintf(clus,"%d",clusters);
+	sprintf(trial,"%d",trials);
+	strcat(entropy_fname,"entropy_matrix/");
+	strcat(entropy_fname,fname);
+	strcat(entropy_fname,"_clusters_");
+	strcat(entropy_fname,clus);
+	strcat(entropy_fname,"_trials_");
+	strcat(entropy_fname,trial);
+	strcat(entropy_fname,".txt");
+	return entropy_fname;
 }
 
 int main(int argc,char **argv)
@@ -308,6 +328,11 @@ int main(int argc,char **argv)
 	readClassFile(argv[2]);
 	clusters = atoi(argv[3]); 
 	trials = atoi(argv[4]);
+	double t1,t2;
+    struct timeval tv1,tv2;
+
+	gettimeofday (&tv1, NULL);
+    t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
 	for(int i=0;i<trials;i++)
 	{
 		obj_value = do_clustering(i);
@@ -317,16 +342,26 @@ int main(int argc,char **argv)
 			for(int j=0;j<rowind;j++) best_cluster_map[j] = cluster_map[j];
 		}
 	}
+	gettimeofday (&tv2, NULL);
+    t2 = (double) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
 
 	write_output(argv[5]);
 	for(int i=0;i<rowind;i++) 
 		entropy_matrix[best_cluster_map[i]][class_map[i]] = entropy_matrix[best_cluster_map[i]][class_map[i]]+1;	
 
-	write_entropy_matrix();	
+	char *entropy_fname = (char*)malloc(128*sizeof(char));
+	get_entropy_file_name(entropy_fname,argv[1]);
+	write_entropy_matrix(entropy_fname);
+
+	char measures[] = "measures.csv";
+	FILE* fp = fopen(measures,"a");
+	double entropy = compute_entropy();	
+	double purity = compute_purity();
 	printf("############################\n");
 	printf("Objective function value: %.6lf\n",max_obj_value);
-	printf("Entropy: %.6lf\n",compute_entropy());
-	printf("purity: %.6lf\n",compute_purity());
+	printf("Entropy: %.6lf\n",entropy);
+	printf("purity: %.6lf\n",purity);
 	printf("############################\n");
+	fprintf(fp,"%s,%d,%d,%d,%d,%d,%.6lf,%.6lf,%.6lf\n",argv[1],clusters,trials,rowind,TOTAL_FEATURES,colind,entropy,purity,t2-t1);
 	return 0;
 }
