@@ -22,6 +22,7 @@ char class_name[MAX_OBJECTS][CLASS_NAME_LENGTH];
 int rowptr[MAX_OBJECTS];
 int colptr[MAX_FEATURES];
 int cluster_count[MAX_CENTROIDS];
+int pre_cluster_map[MAX_OBJECTS];
 int cluster_map[MAX_OBJECTS];
 int best_cluster_map[MAX_OBJECTS];
 int entropy_matrix[MAX_CENTROIDS][MAX_OBJECTS];
@@ -45,7 +46,6 @@ int pre_object_id;
 int object_id;
 int feature_id;
 double frequency;
-double max_obj_value = 0.0;
 const double tolerance = 1e-5;
 
 void init()
@@ -66,7 +66,15 @@ void printCSR()
 void get_initial_centroids(int run)
 {
 	srand(run);
-	int n = rowind;
+	int block_size = rowind/clusters;
+	int n = 0;
+	for(int i=0;i<clusters;i++)
+	{
+		n = rand()%block_size;
+		init_centroids[i] = i*block_size+n;
+	}
+	return;
+	n = rowind;
 	int rem = RAND_MAX%n;
 	int x = 0;
 	int idx = 0;
@@ -100,7 +108,6 @@ void readInput(char *fname)
 		TOTAL_FEATURES = max(TOTAL_FEATURES,feature_id);
 		colptr[colind] = feature_id;
 		values[colind] = frequency;
-		assert(frequency<=1.00);
 		colind++;
 		pre_object_id = object_id;
 	}
@@ -139,16 +146,8 @@ int get_best_cluster(int req_object_id)
 	{
 		dist = 0;
 		for(int j=rowptr[req_object_id];j<rowptr[req_object_id+1];j++)
-		{	
-			//if(0==req_object_id) printf("%.6lf %.6lf %d\n",centroids[i][colptr[j]],values[j],i);
 			dist = dist + centroids[i][colptr[j]]  * values[j] ;
-			assert(dist>=0.0);
-			assert(centroids[i][colptr[j]]<=1.00);
-			assert(values[j]<=1.00);
-		}
-		assert(dist>=0);	
-		assert(isnan(dist)==0);	
-		assert(normalizing_factor[i]>0);	
+		
 		dist = dist/normalizing_factor[i];
 		if( dist - max_similarity > tolerance )
 		{
@@ -181,22 +180,20 @@ double evaluate_objective_function()
 	return ans;	
 }
 
-int shouldBreak(int iter,double cur_obj_value)
+void normalize(int cluster_id)
 {
-	int is_solution_stable = 1;
-	if( iter < STOP_LIMIT ) iter_objective_function[iter] = cur_obj_value;
-	else
+	double csum = 0.0;
+	for(int j=0;j<=TOTAL_FEATURES;j++) 
 	{
-		for(int i=0;i<STOP_LIMIT-1;i++) iter_objective_function[i] = iter_objective_function[i+1];
-		iter_objective_function[STOP_LIMIT-1] = cur_obj_value;
-
-		for(int i=0;i<STOP_LIMIT-1 && is_solution_stable ;i++)
-		{
-			if(mabs(iter_objective_function[i]-iter_objective_function[i+1]) > tolerance)
-					is_solution_stable = 0;
-		}
+		csum = csum + tcentroids[cluster_id][j] * tcentroids[cluster_id][j];
+		centroids[cluster_id][j] = tcentroids[cluster_id][j];
+		tcentroids[cluster_id][j] = 0;
 	}
-	return iter >= STOP_LIMIT && is_solution_stable ? 1:0;
+	csum = sqrt(csum);
+	if(tolerance < csum) normalizing_factor[cluster_id] = csum;
+	else normalizing_factor[cluster_id] = 1.0;
+	cluster_count[cluster_id] = 0;	
+	assert(normalizing_factor[cluster_id] > 0);	
 }
 
 double do_clustering(int run)
@@ -205,72 +202,57 @@ double do_clustering(int run)
 	srand(seeds[run]);
 	double cur_obj_value = 0.0;
 	double csum = 0.0;	
+	double p1 = 0.0;
 
 	get_initial_centroids(seeds[run]);
-	for(int i=0;i<clusters;i++) for(int j=0;j<=TOTAL_FEATURES;j++) centroids[i][j] = 0;
+	for(int i=0;i<rowind;i++) 
+	{
+		cluster_map[i] = -1;
+		pre_cluster_map[i]=-1;
+	}
+
+	for(int i=0;i<clusters;i++) 
+		for(int j=0;j<=TOTAL_FEATURES;j++) 
+			centroids[i][j] = 0;
+	
 	for(int i=0;i<clusters;i++)
 	{
 		object_id = init_centroids[i];
-		//printf("%d ",object_id);
 		for(int j=rowptr[object_id];j<rowptr[object_id+1];j++) 
 			centroids[i][colptr[j]] = values[j];
 		normalizing_factor[i] = 1.0;
 	}
-	/*
-	puts(" ------------- ");
-	for(int i=0;i<clusters;i++)
-	{
-		for(int j=rowptr[i];j<rowptr[i+1];j++)
-			printf("(%.6lf,%.6lf) ",centroids[i][colptr[j]],values[j]);
-		puts("");
-	}
-	puts(" -------------- ");
-	*/
+	
+	int changes = 0;
 	for(int k=0;k<MAX_ITERATIONS;k++)
 	{
+		changes = 0;
 		for(int i=0;i<rowind;i++)
 		{
 				cluster_id = get_best_cluster(i);
-		//		printf("%d %d\n",i,cluster_id);
 				cluster_map[i] = cluster_id;
+				
 				for(int j=rowptr[i];j<rowptr[i+1];j++) 
-					tcentroids[cluster_id][colptr[j]] = (tcentroids[cluster_id][colptr[j]]*cluster_count[cluster_id] + values[j])/(cluster_count[cluster_id]+1);
+				{
+					p1 = (tcentroids[cluster_id][colptr[j]]*cluster_count[cluster_id] + values[j]);
+					p1 = p1/(cluster_count[cluster_id]+1);
+					tcentroids[cluster_id][colptr[j]] = p1;
+				}
+				
 				cluster_count[cluster_id] = cluster_count[cluster_id] + 1;
+				if(pre_cluster_map[i]!=cluster_map[i] || 0==k) changes++;
+				pre_cluster_map[i] = cluster_map[i];
 		}
 		for(int i=0;i<clusters;i++)
-		{
-			csum = 0.0;
-			
-			for(int j=0;j<=TOTAL_FEATURES;j++) csum = csum + tcentroids[i][j] * tcentroids[i][j];
-			
-			csum = sqrt(csum);
-			if(tolerance < csum) normalizing_factor[i] = csum;
-			else normalizing_factor[i] = 1.0;
-			cluster_count[i] = 0;
+			normalize(i);
 		
-			assert(normalizing_factor[i] > 0);	
-			for(int j=0;j<=TOTAL_FEATURES;j++) 
-			{
-				if(csum>0) centroids[i][j] = tcentroids[i][j]/normalizing_factor[i]; 
-				else centroids[i][j]=0.0;
-				tcentroids[i][j]=0;
-			}
-		}
-		
-		cur_obj_value = evaluate_objective_function();
-		//printf("%.6lf\n",cur_obj_value);
-		if(cur_obj_value + tolerance > max_obj_value)
+		if(changes==0) 
 		{
-			max_obj_value = cur_obj_value;
-			for(int j=0;j<rowind;j++) best_cluster_map[j] = cluster_map[j];
-		}
-		if(shouldBreak(k,cur_obj_value))
-		{
-				printf("Breaking at %d iteration\n",k+1);
-				break;
+			printf("Breaking at iteration %d\n",k+1);
+			break;
 		}
 	}
-	return cur_obj_value;
+	return evaluate_objective_function();
 }
 
 void write_output(char *fname)
@@ -340,6 +322,7 @@ char *get_entropy_file_name(char* entropy_fname,char *fname)
 int main(int argc,char **argv)
 {
 	double obj_value = 0.0;
+	double max_obj_value = 0.0;
 	init();
 	readInput(argv[1]);
 	readClassFile(argv[2]);
@@ -351,8 +334,14 @@ int main(int argc,char **argv)
 	gettimeofday (&tv1, NULL);
     t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
 	for(int i=0;i<trials;i++)
+	{
 		obj_value = do_clustering(i);
-	
+		if(obj_value>max_obj_value)
+		{
+			max_obj_value = obj_value;
+			for(int j=0;j<rowind;j++) best_cluster_map[j] = cluster_map[j];
+		}
+	}
 	gettimeofday (&tv2, NULL);
     t2 = (double) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
 
