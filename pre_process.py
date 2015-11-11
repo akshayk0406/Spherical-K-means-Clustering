@@ -139,7 +139,6 @@ Parameters:- string,ngram
 Return Value:- list containing ngrams of size ngrams (character-based not word-based)
 """
 def get_ngram_representation(tokens,ngrams):
-	result = []
 	text = " ".join([x for x in tokens])
 	return [text[i-ngrams:i+1] for i,char in enumerate(text)][ngrams:]
 
@@ -191,12 +190,19 @@ def normalize(word_dict,word_frequency,tag,clean_files,words):
 	for k,v in word_dict.iteritems():
 		sum_sq = 0
 		for fv,value in v:
-			p = (value * math.log((clean_files*1.0)/len(word_frequency[words[fv]][tag])))
-			sum_sq = sum_sq + p*p
+			idf = math.log((clean_files*1.0)/len(word_frequency[words[fv]][tag]))
+			tf_idf = (value * idf)
+			sum_sq = sum_sq + tf_idf**2
+		
 		sum_sq = sum_sq**0.5
 		result_vect = []
+		csum = 0
 		for fv,value in v:
-			result_vect.append((fv,value*1.0/sum_sq))
+			idf = math.log((clean_files*1.0)/len(word_frequency[words[fv]][tag]))
+			tf_idf = (value * idf)
+			normalized_freq = (tf_idf*1.)/sum_sq
+			result_vect.append((fv,normalized_freq))
+		
 		result[k] = result_vect
 	return result
 
@@ -283,7 +289,7 @@ def generate_feature_space(base_folder,ngrams,output_dir,stem,p):
 
 	print "Clean files " + str(clean_files)
 	lower_limit = 2
-	threshold = 0.80
+	threshold = 0.90
 	enumerate_words(feature_vector_trie.root,[],feature_vector)
 	feature_vector = remove_unecessary_terms(feature_vector,word_frequency,'bag',threshold,clean_files,lower_limit)
 
@@ -328,9 +334,13 @@ def create_feature_vector(base_folder,output_base_dir,ngrams,file_bow_dict,featu
 		output_feature_vector[filename] = []
 		word_count = Counter(feature_vector_list)
 		
+		normalize_factor = 0
 		for k,v in word_count.iteritems():
 			if k in fv_dict:
-				output_feature_vector[filename].append((fv_dict[k],v))
+				normalize_factor = normalize_factor + v
+		for k,v in word_count.iteritems():
+			if k in fv_dict:
+				output_feature_vector[filename].append((fv_dict[k],(v*1.)/normalize_factor))
 
 	#Normalize and then write
 	dump_to_input_file(output_base_dir,'bag.csv',output_feature_vector,word_frequency,'bag',clean_files,feature_vector)	
@@ -346,9 +356,13 @@ def create_feature_vector(base_folder,output_base_dir,ngrams,file_bow_dict,featu
 			if filename not in output_feature_space[ngram]:
 				output_feature_space[ngram][filename] = []
 			ngram_count = Counter(values)
+			normalize_factor = 0
 			for k,v in ngram_count.iteritems():
 				if k in output_ngram_dict[ngram]:
-					output_feature_space[ngram][filename].append((output_ngram_dict[ngram][k],v))
+					normalize_factor = normalize_factor + v
+			for k,v in ngram_count.iteritems():
+				if k in output_ngram_dict[ngram]:
+					output_feature_space[ngram][filename].append((output_ngram_dict[ngram][k],(v*1.)/normalize_factor))
 
 	for k,v in output_feature_space.iteritems():
 		dump_to_input_file(output_base_dir,"char"+str(k)+".csv",output_feature_space[k],word_frequency,'char'+str(k),clean_files,feature_space[k])
