@@ -181,7 +181,7 @@ int get_best_cluster(int req_object_id)
 			csum = csum + centroids[i][colptr[j]]*values[j];
 		
 		csum = csum/normalizing_factor[i];
-		assert(csum>=0 && csum<=1.00);
+		assert(csum+tolerance>=0.00 && csum-tolerance<=1.00);
 		if(csum + tolerance > best_sim)
 		{
 			best_sim  = csum;
@@ -266,11 +266,7 @@ double do_clustering(int run)
 			}
 			pre_cluster_map[i] = cluster_map[i];
 		}
-		if(!centroid_changed) 
-		{
-			printf("Breaking at %d iteration \n",k+1);
-			break;
-		}
+		if(!centroid_changed) break;
 	}
 	return evaluate_objective_function();
 }
@@ -306,6 +302,7 @@ double compute_entropy()
 		{
 			if(entropy_matrix[i][j]) csum = csum + (-1*(entropy_matrix[i][j]/rsum)*log2((entropy_matrix[i][j]/rsum)));
 		}
+		csum = csum/log2(total_classes);
 		ans = ans + (csum*rsum)/rowind;
 	}
 	return ans;
@@ -377,11 +374,9 @@ int main(int argc,char **argv)
 	FILE* fp = fopen(measures,"a");
 	double entropy = compute_entropy();	
 	double purity = compute_purity();
-	printf("############################\n");
-	printf("Objective function value: %.6lf\n",max_obj_value);
-	printf("Entropy: %.6lf\n",entropy);
-	printf("purity: %.6lf\n",purity);
-	printf("############################\n");
+	printf("####################################################################  \n");
+    printf("Objective function value: %.6lf ,Entropy: %.6lf ,Purity: %.6lf ,#Rows: %d ,#Columns: %d ,#NonZeros: %d\n",max_obj_value,entropy,purity,rowind,TOTAL_FEATURES,colind);
+    printf("####################################################################  \n");
 	fprintf(fp,"%s,%d,%d,%d,%d,%d,%.6lf,%.6lf,%.6lf\n",argv[1],clusters,trials,rowind,TOTAL_FEATURES,colind,entropy,purity,t2-t1);
 	return 0;
 }
