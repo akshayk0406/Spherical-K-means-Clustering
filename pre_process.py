@@ -3,7 +3,6 @@ import sys
 from os import listdir,makedirs
 from os.path import isfile,join,exists
 from collections import defaultdict
-from porter import Singleton,PorterStemmer
 import math
 
 stop_words = ['a','about','above','across','after','again','against','all','almost','alone','along','already','also','although','always','among','an','and','another','any','anybody','anyone','anything','anywhere','are','area','areas','around','as','ask','asked','asking','asks','at','away','b','back','backed','backing','backs','be','became','because','become','becomes','been','before','began','behind','being','beings','best','better','between','big','both','but','by','c','came','can','cannot','case','cases','certain','certainly','clear','clearly','come','could','d','did','differ','different','differently','do','does','done','down','down','downed','downing','downs','during','e','each','early','either','end','ended','ending','ends','enough','even','evenly','ever','every','everybody','everyone','everything','everywhere','f','face','faces','fact','facts','far','felt','few','find','finds','first','for','four','from','full','fully','further','furthered','furthering','furthers','g','gave','general','generally','get','gets','give','given','gives','go','going','good','goods','got','great','greater','greatest','group','grouped','grouping','groups','h','had','has','have','having','he','her','here','herself','high','high','high','higher','highest','him','himself','his','how','however','i','if','important','in','interest','interested','interesting','interests','into','is','it','its','itself','j','just','k','keep','keeps','kind','knew','know','known','knows','l','large','largely','last','later','latest','least','less','let','lets','like','likely','long','longer','longest','m','made','make','making','man','many','may','me','member','members','men','might','more','most','mostly','mr','mrs','much','must','my','myself','n','necessary','need','needed','needing','needs','never','new','new','newer','newest','next','no','nobody','non','noone','not','nothing','now','nowhere','number','numbers','o','of','off','often','old','older','oldest','on','once','one','only','open','opened','opening','opens','or','order','ordered','ordering','orders','other','others','our','out','over','p','part','parted','parting','parts','per','perhaps','place','places','point','pointed','pointing','points','possible','present','presented','presenting','presents','problem','problems','put','puts','q','quite','r','rather','really','right','right','room','rooms','s','said','same','saw','say','says','second','seconds','see','seem','seemed','seeming','seems','sees','several','shall','she','should','show','showed','showing','shows','side','sides','since','small','smaller','smallest','so','some','somebody','someone','something','somewhere','state','states','still','still','such','sure','t','take','taken','than','that','the','their','them','then','there','therefore','these','they','thing','things','think','thinks','this','those','though','thought','thoughts','three','through','thus','to','today','together','too','took','toward','turn','turned','turning','turns','two','u','under','until','up','upon','us','use','used','uses','v','very','w','want','wanted','wanting','wants','was','way','ways','we','well','wells','went','were','what','when','where','whether','which','while','who','whole','whose','why','will','with','within','without','work','worked','working','works','would','x','y','year','years','yet','you','young','younger','youngest','your','yours','z']
@@ -101,7 +100,7 @@ def remove_non_alpha_numeric(line):
 Purpose:- Entry point of pre-processing for line. Takes string as input and pre-processes it by applying above mentioned function
 Return Value:- Returns a list with all valid words in string
 """
-def pre_process(line,stem,p):
+def pre_process(line):
 
 	result = []
 	line = remove_nonascii(line)
@@ -110,7 +109,6 @@ def pre_process(line,stem,p):
 	tokens = line.split(" ")
 	for tk in tokens:
 		tk = tk.strip()
-		tk = p.stem(tk,0,len(tk)-1)
 		if not unicode(tk,'utf-8').isnumeric() and len(tk) > 0 and tk not in stop_words:
 			result.append(tk)
 	return result
@@ -119,7 +117,7 @@ def pre_process(line,stem,p):
 Purpose:- Entry point of pre-processing for file.
 Return Value:- Returns a list with valid words in file
 """
-def process(fname,stemp,p):
+def process(fname):
 	original_posting = is_original_posting(fname)
 	if not original_posting:
 		return
@@ -127,7 +125,7 @@ def process(fname,stemp,p):
 	result = []
 	text = extract_text(fname)
 	for line in text:
-		line = pre_process(line,stem,p)
+		line = pre_process(line)
 		if line and len(line)>0:
 			result = result + line
 	
@@ -242,7 +240,7 @@ Parameters:- base_folder -> Directory from where to read the files
 			 ngrams -> list specifying different length of ngrams
 			 verbose -> write intermediate output to stdout
 """
-def generate_feature_space(base_folder,ngrams,output_dir,stem,p):
+def generate_feature_space(base_folder,ngrams,output_dir):
 	
 	file_bow_dict = {}
 	file_ngram_dict = {}
@@ -270,7 +268,7 @@ def generate_feature_space(base_folder,ngrams,output_dir,stem,p):
 			postings = listdir(data_file_path)
 			for input_file in postings:
 				file_path = join(join(base_folder,data_file),input_file)
-				file_tokens = process(file_path,stem,p)
+				file_tokens = process(file_path)
 				if file_tokens and len(file_tokens) > 0:
 					file_bow_dict[file_path] = file_tokens
 					
@@ -371,8 +369,6 @@ total_args = len(sys.argv)
 base_folder = '20_newsgroups'
 ngrams = [3,5,7]
 output_dir = '.'
-stem = Singleton()
-p = PorterStemmer()
 
 if total_args >= 2:
 	base_folder = sys.argv[1]
@@ -381,5 +377,5 @@ if total_args >= 3:
 if total_args >= 4:
 	ngrams = [int(sys.argv[3])]
 
-file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files = generate_feature_space(base_folder,ngrams,output_dir,stem,p)
+file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files = generate_feature_space(base_folder,ngrams,output_dir)
 create_feature_vector(base_folder,output_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files)

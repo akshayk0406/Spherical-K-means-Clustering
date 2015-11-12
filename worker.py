@@ -7,5 +7,8 @@ for f in files:
 		output_file = 'output/'
 		output_file = output_file + f + '_' + str(clus) + '.txt'
 		cmd = './sphkmeans ' + f + ' newsgroups.class ' + str(clus) + ' 20 ' + output_file
-		print cmd
 		os.system(cmd)
+		print cmd
+		cmd = './inc_sphkmeans ' + f + ' newsgroups.class ' + str(clus) + ' 20 ' + output_file
+		os.system(cmd)
+		print cmd
