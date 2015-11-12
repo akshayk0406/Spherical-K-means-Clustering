@@ -7,8 +7,8 @@
 #include<assert.h>
 
 #define STOP_LIMIT 3
-#define MAX_OBJECTS 10000
-#define MAX_FEATURES 8000000
+#define MAX_OBJECTS 7000
+#define MAX_FEATURES 10000000
 #define MAX_CENTROIDS 100
 #define CLASS_NAME_LENGTH 64
 #define MAX_SEEDS 20
@@ -28,12 +28,11 @@ int best_cluster_map[MAX_OBJECTS];
 int entropy_matrix[MAX_CENTROIDS][MAX_OBJECTS];
 int class_map[MAX_OBJECTS];
 int init_centroids[MAX_CENTROIDS];
-double iter_objective_function[STOP_LIMIT];
-double normalizing_factor[MAX_CENTROIDS];
-double values[MAX_FEATURES];
-double centroids[MAX_CENTROIDS][MAX_FEATURES];
-double tcentroids[MAX_CENTROIDS][MAX_FEATURES];
-double objective_function[MAX_CENTROIDS][MAX_FEATURES];
+float normalizing_factor[MAX_CENTROIDS];
+float values[MAX_FEATURES];
+float **centroids;
+float **tcentroids;
+float objective_function[MAX_CENTROIDS][MAX_FEATURES];
 
 int TOTAL_FEATURES;
 int rowind;
@@ -45,20 +44,30 @@ int total_classes;
 int pre_object_id;
 int object_id;
 int feature_id;
-double frequency;
-const double tolerance = 1e-5;
+float frequency;
+const float tolerance = 1e-5;
 
 void init()
 {
 	int i = 0 ;
 	for(i=1;i<=39;i=i+2) seeds[i/2] = i;
+	
+	centroids = (float **)malloc(MAX_CENTROIDS*sizeof(float*));
+	tcentroids = (float **)malloc(MAX_CENTROIDS*sizeof(float*));
+
+    for(i=0;i<clusters;i++)
+	{
+        centroids[i] = (float *)malloc((TOTAL_FEATURES+2)*sizeof(float));
+		tcentroids[i] = (float *)malloc((TOTAL_FEATURES+2)*sizeof(float));
+	}
 }
 
 void printCSR()
 {
-	for(int i=0;i<=rowind;i++) 
+	int i=0,j=0;
+	for(i=0;i<=rowind;i++) 
 	{
-		for(int j=rowptr[i];j<rowptr[i+1];j++) printf("(%d %lf),",colptr[j],values[j]);
+		for(j=rowptr[i];j<rowptr[i+1];j++) printf("(%d %f),",colptr[j],values[j]);
 		printf("\n");
 	}
 }
@@ -67,38 +76,20 @@ void get_initial_centroids(int run)
 {
 	srand(run);
 	int block_size = rowind/clusters;
-	int n = 0;
-	for(int i=0;i<clusters;i++)
+	int n = 0,i=0;
+	for(i=0;i<clusters;i++)
 	{
 		n = rand()%block_size;
 		init_centroids[i] = i*block_size+n;
 	}
 	return;
-	n = rowind;
-	int rem = RAND_MAX%n;
-	int x = 0;
-	int idx = 0;
-	int ispresent = 0;
-	while(idx<clusters)
-	{
-		do
-		{
-			x = rand();	
-		}while(x >= RAND_MAX - rem);
-		x = x%n;
-		ispresent = 0;
-		for(int i=0;i<idx && !ispresent;i++)
-			if(init_centroids[i]==x) ispresent = 1;
-		
-		if(!ispresent) { init_centroids[idx] = x ; idx++;}
-	}
 }
 
 void readInput(char *fname)
 {
 	pre_object_id = -1;
 	FILE *fp = fopen(fname,"r");
-	while(fscanf(fp,"%d,%d,%lf",&object_id,&feature_id,&frequency) !=EOF)
+	while(fscanf(fp,"%d,%d,%f",&object_id,&feature_id,&frequency) !=EOF)
 	{
 		if(pre_object_id != object_id)
 		{
@@ -139,13 +130,13 @@ void readClassFile(char *fname)
 
 int get_best_cluster(int req_object_id)
 {
-	int result = 0;
-	double dist = 0.0;
-	double max_similarity = -2.00;
-	for(int i=0;i<clusters;i++)
+	int result = 0,i=0,j=0;
+	float dist = 0.0;
+	float max_similarity = -2.00;
+	for(i=0;i<clusters;i++)
 	{
 		dist = 0;
-		for(int j=rowptr[req_object_id];j<rowptr[req_object_id+1];j++)
+		for(j=rowptr[req_object_id];j<rowptr[req_object_id+1];j++)
 			dist = dist + centroids[i][colptr[j]]  * values[j] ;
 		
 		dist = dist/normalizing_factor[i];
@@ -160,18 +151,19 @@ int get_best_cluster(int req_object_id)
 	return result;
 }
 
-double evaluate_objective_function()
+float evaluate_objective_function()
 {
-	for(int i=0;i<rowind;i++)
+	int i=0,j=0;
+	for(i=0;i<rowind;i++)
 	{
-		for(int j=rowptr[i];j<rowptr[i+1];j++) 
+		for(j=rowptr[i];j<rowptr[i+1];j++) 
 			objective_function[cluster_map[i]][j] = objective_function[cluster_map[i]][j] + values[j];	
 	}
-	double dist = 0.0,ans = 0.0;
-	for(int i=0;i<clusters;i++)
+	float dist = 0.0,ans = 0.0;
+	for(i=0;i<clusters;i++)
 	{
 		dist = 0.0;
-		for(int j=0;j<=TOTAL_FEATURES;j++) 
+		for(j=0;j<=TOTAL_FEATURES;j++) 
 		{
 			dist = dist + (objective_function[i][j]*objective_function[i][j]);
 			assert(dist>=0);
@@ -184,8 +176,9 @@ double evaluate_objective_function()
 
 void normalize(int cluster_id)
 {
-	double csum = 0.0;
-	for(int j=0;j<=TOTAL_FEATURES;j++) 
+	int j=0;
+	float csum = 0.0;
+	for(j=0;j<=TOTAL_FEATURES;j++) 
 	{
 		csum = csum + tcentroids[cluster_id][j] * tcentroids[cluster_id][j];
 		centroids[cluster_id][j] = tcentroids[cluster_id][j];
@@ -198,43 +191,43 @@ void normalize(int cluster_id)
 	assert(normalizing_factor[cluster_id] > 0);	
 }
 
-double do_clustering(int run)
+float do_clustering(int run)
 {
-	int cluster_id = 0;
+	int cluster_id = 0,i=0,j=0,k=0;
 	srand(seeds[run]);
-	double cur_obj_value = 0.0;
-	double csum = 0.0;	
-	double p1 = 0.0;
+	float cur_obj_value = 0.0;
+	float csum = 0.0;	
+	float p1 = 0.0;
 
 	get_initial_centroids(seeds[run]);
-	for(int i=0;i<rowind;i++) 
+	for(i=0;i<rowind;i++) 
 	{
 		cluster_map[i] = -1;
 		pre_cluster_map[i]=-1;
 	}
 
-	for(int i=0;i<clusters;i++) 
-		for(int j=0;j<=TOTAL_FEATURES;j++) 
+	for(i=0;i<clusters;i++) 
+		for(j=0;j<=TOTAL_FEATURES;j++) 
 			centroids[i][j] = 0;
 	
-	for(int i=0;i<clusters;i++)
+	for(i=0;i<clusters;i++)
 	{
 		object_id = init_centroids[i];
-		for(int j=rowptr[object_id];j<rowptr[object_id+1];j++) 
+		for(j=rowptr[object_id];j<rowptr[object_id+1];j++) 
 			centroids[i][colptr[j]] = values[j];
 		normalizing_factor[i] = 1.0;
 	}
 	
 	int changes = 0;
-	for(int k=0;k<MAX_ITERATIONS;k++)
+	for(k=0;k<MAX_ITERATIONS;k++)
 	{
 		changes = 0;
-		for(int i=0;i<rowind;i++)
+		for(i=0;i<rowind;i++)
 		{
 				cluster_id = get_best_cluster(i);
 				cluster_map[i] = cluster_id;
 				
-				for(int j=rowptr[i];j<rowptr[i+1];j++) 
+				for(j=rowptr[i];j<rowptr[i+1];j++) 
 				{
 					p1 = (tcentroids[cluster_id][colptr[j]]*cluster_count[cluster_id] + values[j]);
 					p1 = p1/(cluster_count[cluster_id]+1);
@@ -245,7 +238,7 @@ double do_clustering(int run)
 				if(pre_cluster_map[i]!=cluster_map[i] || 0==k) changes++;
 				pre_cluster_map[i] = cluster_map[i];
 		}
-		for(int i=0;i<clusters;i++)
+		for(i=0;i<clusters;i++)
 			normalize(i);
 		
 		if(changes==0) break; 
@@ -255,49 +248,53 @@ double do_clustering(int run)
 
 void write_output(char *fname)
 {
+	int i=0;
 	FILE* fp = fopen(fname,"w");
-	for(int i=0;i<rowind;i++) fprintf(fp,"%d,%d\n",i,best_cluster_map[i]);
+	for(i=0;i<rowind;i++) fprintf(fp,"%d,%d\n",i,best_cluster_map[i]);
 	fclose(fp);
 }
 
 void write_entropy_matrix(char *entropy_fname)
 {
+	int i=0,j=0;
 	FILE *fp = fopen(entropy_fname,"w");
-	for(int i=0;i<clusters;i++)
+	for(i=0;i<clusters;i++)
     {
-        for(int j=0;j<total_classes;j++)
+        for(j=0;j<total_classes;j++)
             fprintf(fp,"%d ",entropy_matrix[i][j]);
         fprintf(fp,"\n");
     }
 	fclose(fp);
 }
 
-double compute_entropy()
+float compute_entropy()
 {
-	double ans = 0.0,rsum=0.0,csum=0.0;
-	for(int i=0;i<clusters;i++)
+	int i=0,j=0;
+	float ans = 0.0,rsum=0.0,csum=0.0;
+	for(i=0;i<clusters;i++)
 	{
 		rsum = 0.0;
 		csum = 0.0;
-		for(int j=0;j<total_classes;j++) rsum = rsum + entropy_matrix[i][j];
-		for(int j=0;j<total_classes;j++) 
+		for(j=0;j<total_classes;j++) rsum = rsum + entropy_matrix[i][j];
+		for(j=0;j<total_classes;j++) 
 		{
 			if(entropy_matrix[i][j]) csum = csum + (-1*(entropy_matrix[i][j]/rsum)*log2((entropy_matrix[i][j]/rsum)));
 		}
-		csum = csum / log2(total_classes);
+		//csum = csum / log2(total_classes);
 		ans = ans + (csum*rsum)/rowind;
 	}
 	return ans;
 }
 
-double compute_purity()
+float compute_purity()
 {
-	double ans = 0.0,rsum=0.0,csum=0.0;
-    for(int i=0;i<clusters;i++)
+	int i=0,j=0;
+	float ans = 0.0,rsum=0.0,csum=0.0;
+    for(i=0;i<clusters;i++)
     {
         rsum = 0.0;
         csum = 0.0;
-        for(int j=0;j<total_classes;j++) csum = max(csum , entropy_matrix[i][j]);
+        for(j=0;j<total_classes;j++) csum = max(csum , entropy_matrix[i][j]);
         ans = ans + csum/rowind;
     }
     return ans;
@@ -320,32 +317,34 @@ char *get_entropy_file_name(char* entropy_fname,char *fname)
 
 int main(int argc,char **argv)
 {
-	double obj_value = 0.0;
-	double max_obj_value = 0.0;
+	int i=0,j=0;
+	float obj_value = 0.0;
+	float max_obj_value = 0.0;
+	float t1,t2;
+    struct timeval tv1,tv2;
+	
 	init();
 	readInput(argv[1]);
 	readClassFile(argv[2]);
 	clusters = atoi(argv[3]); 
 	trials = atoi(argv[4]);
-	double t1,t2;
-    struct timeval tv1,tv2;
-
+	
 	gettimeofday (&tv1, NULL);
-    t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
-	for(int i=0;i<trials;i++)
+    t1 = (float) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
+	for(i=0;i<trials;i++)
 	{
 		obj_value = do_clustering(i);
 		if(obj_value>max_obj_value)
 		{
 			max_obj_value = obj_value;
-			for(int j=0;j<rowind;j++) best_cluster_map[j] = cluster_map[j];
+			for(j=0;j<rowind;j++) best_cluster_map[j] = cluster_map[j];
 		}
 	}
 	gettimeofday (&tv2, NULL);
-    t2 = (double) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
+    t2 = (float) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
 
 	write_output(argv[5]);
-	for(int i=0;i<rowind;i++) 
+	for(i=0;i<rowind;i++) 
 		entropy_matrix[best_cluster_map[i]][class_map[i]] = entropy_matrix[best_cluster_map[i]][class_map[i]]+1;	
 
 	char *entropy_fname = (char*)malloc(128*sizeof(char));
@@ -354,11 +353,11 @@ int main(int argc,char **argv)
 
 	char measures[] = "measures.csv";
 	FILE* fp = fopen(measures,"a");
-	double entropy = compute_entropy();	
-	double purity = compute_purity();
+	float entropy = compute_entropy();	
+	float purity = compute_purity();
 	printf("####################################################################  \n");
-	printf("Objective function value: %.6lf ,Entropy: %.6lf ,Purity: %.6lf ,#Rows: %d ,#Columns: %d ,#NonZeros: %d\n",max_obj_value,entropy,purity,rowind,TOTAL_FEATURES,colind);
+	printf("Objective function value: %.6f ,Entropy: %.6f ,Purity: %.6f ,#Rows: %d ,#Columns: %d ,#NonZeros: %d\n",max_obj_value,entropy,purity,rowind,TOTAL_FEATURES,colind);
 	printf("####################################################################  \n");
-	fprintf(fp,"%s,%d,%d,%d,%d,%d,%.6lf,%.6lf,%.6lf\n",argv[1],clusters,trials,rowind,TOTAL_FEATURES,colind,entropy,purity,t2-t1);
+	fprintf(fp,"%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f\n",argv[1],clusters,trials,rowind,TOTAL_FEATURES,colind,entropy,purity,t2-t1);
 	return 0;
 }
