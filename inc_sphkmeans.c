@@ -1,3 +1,5 @@
+/************** Author: Akshay Kulkarni *****************/
+
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -8,8 +10,8 @@
 
 #define MAX_CLASSES 100
 #define STOP_LIMIT 3
-#define MAX_OBJECTS 6600
-#define MAX_FEATURES 7000000
+#define MAX_OBJECTS 7000
+#define MAX_NON_ZEROS 7000000
 #define MAX_CENTROIDS 65
 #define CLASS_NAME_LENGTH 64
 #define MAX_SEEDS 20
@@ -19,13 +21,33 @@
 #define min(a,b) a>b?b:a
 #define mabs(x) x<0?-x:x
 
-char class_name[MAX_OBJECTS][CLASS_NAME_LENGTH];
-int rowptr[MAX_OBJECTS];
-int colptr[MAX_FEATURES];
-int cluster_count[MAX_CENTROIDS];
-int class_map[MAX_OBJECTS];
-float values[MAX_FEATURES];
+/*
+rowptr,colptr,values are the matrices for storing document-term in sparse format.
+http://www.netlib.org/utk/people/JackDongarra/etemplates/node373.html
+*/
 
+float values[MAX_NON_ZEROS];
+int rowptr[MAX_OBJECTS];
+int colptr[MAX_NON_ZEROS];
+
+/*
+Arrays for storing mapping of object_id and class name
+*/
+char class_name[MAX_OBJECTS][CLASS_NAME_LENGTH];
+int class_map[MAX_OBJECTS];
+
+/*
+cluster_count -> stores number of elements belonging to cluster i
+cluster_map -> stores the index of the cluster to which ith object belong
+pre_cluster_map -> stores the cluster mapping of previous occasion
+best_cluster_map -> stores best cluster mapping (best determined by maximising objective function)
+init_centroids -> stores the object_id's which are initialized are initial centroids
+normalizing_factor -> store the normalizling factor for ith cluster
+entropy_matrix -> stores the entropy matrix (#clusters*#classes). entropy_matrix[i][j] denotes number of items of class j belonging cluster i
+objective_function -> stores vector addition of documents belonging to same cluster i.e objective_function[i] is a vector which sum of all vectors belonging to ith cluster
+centroids -> stores current centroids
+*/
+int *cluster_count;
 int *cluster_map;
 int *pre_cluster_map;
 int *best_cluster_map;
@@ -35,7 +57,14 @@ int **entropy_matrix;
 float **objective_function;
 float **centroids;
 
-int TOTAL_FEATURES;
+/*
+Auxillary variables:-
+total_features -> features space i.e number of attributes
+rowind -> total number of documents
+clusters -> number of clusters to find
+seeds -> stores seed for generating inital centroids
+*/
+int total_features;
 int rowind;
 int colind;
 int clusters;
@@ -46,34 +75,40 @@ int pre_object_id;
 int object_id;
 int feature_id;
 float frequency;
-const float tolerance = 1e-5;
+const float tolerance = 1e-8;
 
+/*
+:purpose
+	- to do all dynamic allocation of memory
+*/
 void init()
 {
 	int i = 0 ;
 	for(i=1;i<=39;i=i+2) seeds[i/2] = i;
 
-	centroids = (float **)malloc((clusters+1)*sizeof(float*));
+	centroids = (float **)calloc((clusters+1),sizeof(float*));
 	for(i=0;i<clusters;i++) 
-		centroids[i] = (float *)malloc((TOTAL_FEATURES+1)*sizeof(float));
+		centroids[i] = (float *)calloc(total_features+1,sizeof(float));
 
-	normalizing_factor = (float *)malloc(sizeof(float)*(clusters+1));
-
-	objective_function = (float **)malloc(sizeof(float*)*(clusters+1));
+	objective_function = (float **)calloc(clusters+1,sizeof(float*));
 	for(i=0;i<clusters;i++)
-		objective_function[i] = (float *)malloc(sizeof(float)*(TOTAL_FEATURES+2));	
+		objective_function[i] = (float *)calloc(total_features+2,sizeof(float));
 
-	entropy_matrix = (int **)malloc(sizeof(int*)*(clusters+1));
+	entropy_matrix = (int **)calloc(clusters+1,sizeof(int*));
 	for(i=0;i<clusters;i++)
-		entropy_matrix[i] = (int*)malloc(sizeof(int)*(total_classes+1));
+		entropy_matrix[i] = (int*)calloc(total_classes+1,sizeof(int));
 
-	init_centroids = (int *)malloc(sizeof(int)*(clusters+1));
-	
-	pre_cluster_map = (int *)malloc(sizeof(int)*(rowind+1));
-	cluster_map = (int *)malloc(sizeof(int)*(rowind+1));
-	best_cluster_map = (int *)malloc(sizeof(int)*(rowind+1));
+	normalizing_factor = (float *)calloc(clusters+1,sizeof(float));
+	init_centroids = (int *)calloc(clusters+1,sizeof(int));
+	pre_cluster_map = (int *)calloc(rowind+1,sizeof(int));
+	cluster_map = (int *)calloc(rowind+1,sizeof(int));
+	best_cluster_map = (int *)calloc(rowind+1,sizeof(int));
 }
 
+/*
+:purpose
+	- to free all the dynamically allocated memory
+*/
 void deinit()
 {
 	int i=0;
@@ -95,6 +130,10 @@ void deinit()
 	free(normalizing_factor);
 }
 
+/*
+:purpose
+	- to print sparse matrix stored in CSR format.
+*/
 void printCSR()
 {
 	int i=0,j=0;
@@ -105,18 +144,34 @@ void printCSR()
 	}
 }
 
+/*
+:purpose
+	-  to generate initial centroids for k-means clustering
+:param
+	- run -> iteration number. seed is choosen accordingly
+:result
+	- stores the object_ids that form centroid in init_centroids
+*/
 void get_initial_centroids(int run)
 {
 	srand(run);
 	int block_size = rowind/clusters;
-	int n = 0;
-	int i=0;
+	int n = 0,i=0;
 	for(i=0;i<clusters;i++)
 	{
 		n = rand()%block_size;
 		init_centroids[i] = i*block_size+n;
 	}
 }
+
+/*
+:purpose
+	-  to read input data in the format of (object_id,feature_id,frequency)
+:param
+	- fname -> file name to read from
+:result
+	- populates rowptr,colptr and values with required values
+*/
 
 void readInput(char *fname)
 {
@@ -129,16 +184,24 @@ void readInput(char *fname)
 			rowptr[rowind] = colind;
 			rowind = rowind +1;
 		}
-		TOTAL_FEATURES = max(TOTAL_FEATURES,feature_id);
+		total_features = max(total_features,feature_id);
 		colptr[colind] = feature_id;
 		values[colind] = frequency;
-		assert(frequency<=1.00);
 		colind++;
 		pre_object_id = object_id;
 	}
 	rowptr[rowind] = colind;
 	fclose(fp);
 }
+
+/*
+:purpose
+	- to read class file containing mapping between object_id and class name
+:param
+	- fname -> file name to read from
+:result
+	- populates class_map and class_name with object_id and class name
+*/
 
 void readClassFile(char *fname)
 {
@@ -162,6 +225,12 @@ void readClassFile(char *fname)
 	fclose(fp);
 }
 
+/*
+:purpose
+	- to evaluate objective function
+:result
+	- computes and return value of optimization function
+*/
 float evaluate_objective_function()
 {
 	int i=0,j=0;
@@ -174,10 +243,9 @@ float evaluate_objective_function()
 	for(i=0;i<clusters;i++)
 	{
 		dist = 0.0;
-		for(j=0;j<=TOTAL_FEATURES;j++) 
+		for(j=0;j<=total_features;j++) 
 		{
 			dist = dist + (objective_function[i][j]*objective_function[i][j]);
-			assert(dist>=0);
 			objective_function[i][j]=0;
 		}
 		ans = ans + sqrt(dist);
@@ -185,16 +253,31 @@ float evaluate_objective_function()
 	return ans;	
 }
 
+/*
+:purpose
+	- to normalize the cluster/centroid
+:param
+	- cluster_id
+:result
+	- normalises the cluster with given cluster_id
+*/
 void normalize(int cluster_id)
 {
 	int j=0;
 	float csum = 0.0;
-	for(j=0;j<=TOTAL_FEATURES;j++) csum = csum + centroids[cluster_id][j]*centroids[cluster_id][j];
+	for(j=0;j<=total_features;j++) csum = csum + centroids[cluster_id][j]*centroids[cluster_id][j];
 	csum = sqrt(csum);
-	assert(csum>=0);
 	normalizing_factor[cluster_id] = csum;
 }
 
+/*
+:purpose
+	- to find best cluster for given object
+:param
+	- req_object_id -> objected id for which we need to find best centroid
+:result
+	- return index of best cluster i.e the cluster with maximum cosine similarity
+*/
 int get_best_cluster(int req_object_id)
 {
 	int i=0,j=0;
@@ -208,7 +291,6 @@ int get_best_cluster(int req_object_id)
 			csum = csum + centroids[i][colptr[j]]*values[j];
 		
 		csum = csum/normalizing_factor[i];
-		assert(csum+tolerance>=0.00 && csum-tolerance<=1.00);
 		if(csum + tolerance > best_sim)
 		{
 			best_sim  = csum;
@@ -223,25 +305,31 @@ void MovePoint(int cluster_id,int ptid,int fg)
 {
 	int j=0;
 	float p1 = 0;
+	int req_cc = cluster_count[cluster_id];
+	
+	if(!fg) req_cc--;
+	else req_cc++;
+
 	for(j=rowptr[ptid];j<=rowptr[ptid+1];j++)
 	{
 		p1 = centroids[cluster_id][colptr[j]]*cluster_count[cluster_id];
-		if(!fg) 
-		{
-			p1 = p1 - values[j];
-			cluster_count[cluster_id] = cluster_count[cluster_id] - 1;
-		}
-		else 
-		{
-			p1 = p1 + values[j];
-			cluster_count[cluster_id] = cluster_count[cluster_id] + 1;
-		}
-		assert(cluster_count[cluster_id]>0);
-		centroids[cluster_id][colptr[j]] = p1/cluster_count[cluster_id];
-	}	
+		if(!fg) p1 = p1 - values[j];
+		else p1 = p1 + values[j];
+		centroids[cluster_id][colptr[j]] = p1/req_cc;
+	}
+	cluster_count[cluster_id] = req_cc;
 	normalize(cluster_id);
 }
 
+/*
+:pupose
+	- to do the clustering
+:param
+	- run -> iteration id
+:result
+	- value of objective function
+*/
+	
 float do_clustering(int run)
 {
 	int cluster_id = 0;
@@ -253,8 +341,18 @@ float do_clustering(int run)
 	int i=0,j=0,k=0;
 	
 	get_initial_centroids(seeds[run]);
-	for(i=0;i<rowind;i++) cluster_map[i] = -1;
-	for(i=0;i<clusters;i++) for(j=0;j<=TOTAL_FEATURES;j++) centroids[i][j] = 0;
+	for(i=0;i<rowind;i++) 
+	{
+		cluster_map[i] = -1;
+		pre_cluster_map[i] = -1;
+	}
+	
+	for(i=0;i<clusters;i++) 
+	{
+		cluster_count[i] = 0;
+		for(j=0;j<=total_features;j++) centroids[i][j] = 0;
+	}
+
 	for(i=0;i<clusters;i++)
 	{
 		cluster_id = init_centroids[i];
@@ -266,6 +364,7 @@ float do_clustering(int run)
 	
 	int centroid_changed = 0;
 	int shouldContinue = 0;	
+	
 	for(k=0;k<MAX_ITERATIONS;k++)
 	{
 		centroid_changed = 0;
@@ -373,7 +472,7 @@ int main(int argc,char **argv)
 {
 	float obj_value = 0.0;
 	float max_obj_value = 0.0;
-	float t1,t2;
+	double t1,t2;
     struct timeval tv1,tv2;
 	int i=0,j=0;	
 
@@ -384,7 +483,7 @@ int main(int argc,char **argv)
 	init();
 
 	gettimeofday (&tv1, NULL);
-    t1 = (float) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
+    t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
 	
 	for(i=0;i<trials;i++)
 	{
@@ -397,7 +496,7 @@ int main(int argc,char **argv)
 	}
 	
 	gettimeofday (&tv2, NULL);
-    t2 = (float) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
+    t2 = (double) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
 
 	write_output(argv[5]);
 	for(i=0;i<rowind;i++) 
@@ -412,9 +511,9 @@ int main(int argc,char **argv)
 	float entropy = compute_entropy();	
 	float purity = compute_purity();
 	printf("####################################################################  \n");
-    printf("Objective function value: %.6f ,Entropy: %.6f ,Purity: %.6f ,#Rows: %d ,#Columns: %d ,#NonZeros: %d\n",max_obj_value,entropy,purity,rowind,TOTAL_FEATURES,colind);
+    printf("Objective function value: %.6f ,Entropy: %.6f ,Purity: %.6f ,#Rows: %d ,#Columns: %d ,#NonZeros: %d, time(in secs): %.6lf\n",max_obj_value,entropy,purity,rowind,total_features,colind,t2-t1);
     printf("####################################################################  \n");
-	fprintf(fp,"%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f\n",argv[1],clusters,trials,rowind,TOTAL_FEATURES,colind,entropy,purity,t2-t1);
+	fprintf(fp,"%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6lf\n",argv[1],clusters,trials,rowind,total_features,colind,entropy,purity,t2-t1);
 	deinit();
 	return 0;
 }
