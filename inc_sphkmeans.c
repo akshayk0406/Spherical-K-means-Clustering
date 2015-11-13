@@ -88,7 +88,7 @@ void init()
 
 	centroids = (float **)calloc((clusters+1),sizeof(float*));
 	for(i=0;i<clusters;i++) 
-		centroids[i] = (float *)calloc(total_features+1,sizeof(float));
+		centroids[i] = (float *)calloc(total_features+2,sizeof(float));
 
 	objective_function = (float **)calloc(clusters+1,sizeof(float*));
 	for(i=0;i<clusters;i++)
@@ -103,6 +103,7 @@ void init()
 	pre_cluster_map = (int *)calloc(rowind+1,sizeof(int));
 	cluster_map = (int *)calloc(rowind+1,sizeof(int));
 	best_cluster_map = (int *)calloc(rowind+1,sizeof(int));
+	cluster_count = (int*)calloc(clusters+1,sizeof(int));
 }
 
 /*
@@ -128,6 +129,7 @@ void deinit()
 	free(cluster_map);
 	free(best_cluster_map);
 	free(normalizing_factor);
+	free(cluster_count);
 }
 
 /*
@@ -481,7 +483,7 @@ int main(int argc,char **argv)
 	clusters = atoi(argv[3]); 
 	trials = atoi(argv[4]);
 	init();
-
+	
 	gettimeofday (&tv1, NULL);
     t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
 	
