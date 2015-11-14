@@ -3,6 +3,7 @@ import numpy as np
 import sys
 
 entropy_file = sys.argv[1]
+output_file = sys.argv[2]
 i = 1
 x = []
 y = []
@@ -23,4 +24,4 @@ intensity = np.array(intensity)
 #now just plug the data into pcolormesh, it's that easy!
 plt.pcolormesh(x, y, intensity)
 plt.colorbar() #need a colorbar to show the intensity scale
-plt.savefig('clustering_heatmap.png')
+plt.savefig(output_file)
