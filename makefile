@@ -1,6 +1,6 @@
-make kmeans:
+kmeans:
 	gcc sphkmeans.c -lm -O2 -o sphkmeans
-make inc_kmeans:
+inc_kmeans:
 	gcc inc_sphkmeans.c -lm -O2 -o inc_sphkmeans
-make preprocess:
-	gcc preprocess.cpp -O2 -o preprocess
+preprocess:
+	gcc preprocess.c -O2 -o preprocess

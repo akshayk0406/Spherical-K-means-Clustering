@@ -25,9 +25,9 @@ rowptr,colptr,values are the matrices for storing document-term in sparse format
 http://www.netlib.org/utk/people/JackDongarra/etemplates/node373.html
 */
 
-float values[MAX_NON_ZEROS];
-int rowptr[MAX_OBJECTS];
-int colptr[MAX_NON_ZEROS];
+int *rowptr;
+int *colptr;
+float *values;
 
 /*
 Arrays for storing mapping of object_id and class name
@@ -75,6 +75,7 @@ int total_classes;
 int pre_object_id;
 int object_id;
 int feature_id;
+int method;
 float frequency;
 const float tolerance = 1e-8;
 
@@ -136,6 +137,9 @@ void deinit()
 	free(cluster_map);
 	free(best_cluster_map);
 	free(normalizing_factor);
+	free(rowptr);
+	free(colptr);
+	free(values);
 }
 
 /*
@@ -147,7 +151,7 @@ void printCSR()
 	int i=0,j=0;
 	for(i=0;i<=rowind;i++) 
 	{
-		for(j=rowptr[i];j<rowptr[i+1];j++) printf("(%d %f),",colptr[j],values[j]);
+		for(j=rowptr[i];j<rowptr[i+1];j++) printf("(%d %.4lf),",colptr[j],values[j]);
 		printf("\n");
 	}
 }
@@ -180,8 +184,13 @@ void get_initial_centroids(int run)
 :result
 	- populates rowptr,colptr and values with required values
 */
-void readInput(char *fname)
+void allocateAndRead(char *fname)
 {
+	colptr = (int*)calloc(colind+1,sizeof(int));
+	values = (float*)calloc(colind+1,sizeof(float));
+	rowptr = (int*)calloc(rowind+1,sizeof(int));
+
+	rowind = 0,colind = 0;	
 	pre_object_id = -1;
 	FILE *fp = fopen(fname,"r");
 	if(!fp) return;
@@ -200,6 +209,31 @@ void readInput(char *fname)
 	}
 	rowptr[rowind] = colind;
 	fclose(fp);
+}
+
+/*
+:purpose
+	-  to read input data in the format of (object_id,feature_id,frequency) and allocate appropriate memory
+:param
+	- fname -> file name to read from
+:result
+	- populates rowptr,colptr and values with required values
+*/
+void readInput(char *fname)
+{
+	pre_object_id = -1;
+	FILE *fp = fopen(fname,"r");
+	if(!fp) return;
+	while(fscanf(fp,"%d,%d,%f",&object_id,&feature_id,&frequency) !=EOF)
+	{
+		if(pre_object_id != object_id) 
+			rowind++;
+		total_features = max(total_features,feature_id);
+		colind++;
+		pre_object_id = object_id;
+	}
+	fclose(fp);
+	allocateAndRead(fname);
 }
 
 /*
@@ -298,7 +332,7 @@ float evaluate_objective_function()
 :result
 	- normalises the cluster with given cluster_id
 */
-void normalize(int cluster_id)
+void normalize_traditional(int cluster_id)
 {
 	int j=0;
 	float csum = 0.0;
@@ -315,34 +349,47 @@ void normalize(int cluster_id)
 }
 
 /*
-:pupose
-	- to do the clustering
+:purpose
+	- to normalize the cluster/centroid
 :param
-	- run -> iteration id
+	- cluster_id
 :result
-	- value of objective function
+	- normalises the cluster with given cluster_id
 */
-float do_clustering(int run)
+void normalize_incremental(int cluster_id)
 {
-	int cluster_id = 0,i=0,j=0,k=0;
-	srand(seeds[run]);
-	float cur_obj_value = 0.0;
-	float csum = 0.0;	
-	float p1 = 0.0;
+	int j=0;
+	float csum = 0.0;
+	for(j=0;j<=total_features;j++) csum = csum + centroids[cluster_id][j]*centroids[cluster_id][j];
+	csum = sqrt(csum);
+	normalizing_factor[cluster_id] = csum;
+}
 
-	get_initial_centroids(seeds[run]); //populates initial centroids
-	/* initialzing the variables for computation */
-	for(i=0;i<rowind;i++) 
-	{
-		cluster_map[i] = -1;
-		pre_cluster_map[i]=-1;
-	}
+/*
+:purpose
+    - Initialzing  parameters for clustering
+:param
+	- run
+:result
+	- Initializes variables for next clustering sequence
+*/
 
-	for(i=0;i<clusters;i++) 
-	{
-		cluster_count[i] = 0;
-		for(j=0;j<=total_features;j++) centroids[i][j] = 0;
-	}
+void initClusteringParameters(int run)
+{
+    int i=0,j=0;
+    get_initial_centroids(seeds[run]); //populates initial centroids
+	/* initializing the variables fro computation */
+    for(i=0;i<rowind;i++)
+    {
+        cluster_map[i] = -1;
+        pre_cluster_map[i] = -1;
+    }
+
+    for(i=0;i<clusters;i++)
+    {
+        cluster_count[i] = 0;
+        for(j=0;j<=total_features;j++) centroids[i][j] = 0;
+    }
 	
 	/* setting initial centroids */
 	for(i=0;i<clusters;i++)
@@ -351,7 +398,109 @@ float do_clustering(int run)
 		for(j=rowptr[object_id];j<rowptr[object_id+1];j++) 
 			centroids[i][colptr[j]] = values[j];
 		normalizing_factor[i] = 1.0;
+		if(1==method) 
+		{
+			cluster_count[i] = 1;
+			cluster_map[object_id] = i;
+		}
 	}
+}
+
+void MovePoint(int cluster_id,int ptid,int fg)
+{
+	int j=0;
+	float p1 = 0;
+	int req_cc = cluster_count[cluster_id];
+
+	if(!fg) req_cc--;
+	else req_cc++;
+
+	for(j=rowptr[ptid];j<=rowptr[ptid+1];j++)
+	{
+		p1 = centroids[cluster_id][colptr[j]]*cluster_count[cluster_id];
+		if(!fg) p1 = p1 - values[j];
+		else p1 = p1 + values[j];
+		centroids[cluster_id][colptr[j]] = p1/req_cc;
+	}
+	cluster_count[cluster_id] = req_cc;
+	normalize_incremental(cluster_id);
+}
+
+/*
+:pupose
+	- to do the clustering using incremental kmeans
+:param
+	- run -> iteration id
+:result
+	- value of objective function
+*/
+
+float incremental_kmeans(int run)
+{
+	int cluster_id = 0;
+	int pre_cluster_id = 0;
+	srand(seeds[run]);
+	float cur_obj_value = 0.0;
+	float csum = 0.0;
+	float p1 = 0.0;
+	int i=0,j=0,k=0;
+
+	initClusteringParameters(run);
+
+	int changes = 0;
+	int shouldContinue = 0;
+
+	for(k=0;k<MAX_ITERATIONS;k++)
+	{
+		changes = 0;
+		shouldContinue = 0;
+		for(i=0;i<rowind;i++)
+		{	
+			shouldContinue = 0;
+			for(j=0;j<clusters && !shouldContinue;j++)
+				if(init_centroids[j] == i ) shouldContinue = 1;
+			if(shouldContinue) continue;
+
+			cluster_id = get_best_cluster(i);
+			cluster_map[i] = cluster_id;
+			if(0==k)
+			{
+				changes++;
+				MovePoint(cluster_id,i,1);
+			}
+			else
+			{
+				if(pre_cluster_map[i]!=cluster_map[i])
+				{
+					changes++;
+					MovePoint(pre_cluster_map[i],i,0);
+					MovePoint(cluster_id,i,1);
+				}
+			}
+			pre_cluster_map[i] = cluster_map[i];
+		}
+		if(0==changes) break;
+	}
+	return evaluate_objective_function();
+}
+
+/*
+:pupose
+	- to do the clustering using traditional kmeans
+:param
+	- run -> iteration id
+:result
+	- value of objective function
+*/
+float traditional_kmeans(int run)
+{
+	int cluster_id = 0,i=0,j=0,k=0;
+	srand(seeds[run]);
+	float cur_obj_value = 0.0;
+	float csum = 0.0;	
+	float p1 = 0.0;
+
+	initClusteringParameters(run);
 	
 	int changes = 0;
 	for(k=0;k<MAX_ITERATIONS;k++)
@@ -376,7 +525,7 @@ float do_clustering(int run)
 		}
 		//normalizing centroids and copying tcentroids to centroids so that we have correct values for next iteration
 		for(i=0;i<clusters;i++)
-			normalize(i);
+			normalize_traditional(i);
 		
 		//Breaking when no change in centroids
 		if(changes==0) break; 
@@ -478,52 +627,86 @@ char *get_entropy_file_name(char* entropy_fname,char *fname)
 	return entropy_fname;
 }
 
+/*
+:purpose
+	- setting clustering parameters
+:param
+	- command line arguments
+:result
+	- setting method variable to run incremental vs traditional kmeans
+*/
+void setParameters(char *params)
+{
+	method = 0;
+	if(strstr(params,"method") && strstr(params,"inc")) //doing incremental clustering
+		method = 1;
+}
+
 int main(int argc,char **argv)
 {
-	int i=0,j=0;
-	float obj_value = 0.0;
-	float max_obj_value = 0.0;
-	double t1,t2;
-    struct timeval tv1,tv2;
-
-	readInput(argv[1]); //reading input file
-	readClassFile(argv[2]); //reading class file
-	clusters = atoi(argv[3]);  // number of clusters
-	trials = atoi(argv[4]); //number of trials
-	init();
-	
-	gettimeofday (&tv1, NULL);
-    t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
-	
-	for(i=0;i<trials;i++)
+	if(argc>=6)
 	{
-		obj_value = do_clustering(i);
-		if(obj_value>max_obj_value)
-		{
-			max_obj_value = obj_value;
-			//storing best clustering mapping
-			for(j=0;j<rowind;j++) best_cluster_map[j] = cluster_map[j];
-		}
-	}
+		int i=0,j=0;
+		float obj_value = 0.0;
+		float max_obj_value = 0.0;
+		double t1,t2;
+    	struct timeval tv1,tv2;
+
+		readInput(argv[1]); //reading input file
+		readClassFile(argv[2]); //reading class file
+		clusters = atoi(argv[3]);  // number of clusters
+		trials = atoi(argv[4]); //number of trials
+		
+		init();
+		if(argc>=7) setParameters(argv[6]);
+			
+		gettimeofday (&tv1, NULL);
+    	t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
 	
-	gettimeofday (&tv2, NULL);
-    t2 = (double) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
+		for(i=0;i<trials;i++)
+		{
+			if(!method) obj_value = traditional_kmeans(i);
+			else obj_value = incremental_kmeans(i);
+			if(obj_value>max_obj_value)
+			{
+				max_obj_value = obj_value;
+				//storing best clustering mapping
+				for(j=0;j<rowind;j++) 
+				{
+					best_cluster_map[j] = cluster_map[j];
+					assert(cluster_map[j]>=0);
+				}
+			}
+		}
+		
+		gettimeofday (&tv2, NULL);
+    	t2 = (double) (tv2.tv_sec) + 0.000001 * tv2.tv_usec;
 
-	write_output(argv[5]);
-	for(i=0;i<rowind;i++) 
-		entropy_matrix[best_cluster_map[i]][class_map[i]] = entropy_matrix[best_cluster_map[i]][class_map[i]]+1;	
+		write_output(argv[5]);
+		for(i=0;i<rowind;i++) 
+			entropy_matrix[best_cluster_map[i]][class_map[i]] = entropy_matrix[best_cluster_map[i]][class_map[i]]+1;	
+		
+		char *entropy_fname = (char*)malloc(128*sizeof(char));
+		strcpy(entropy_fname,strcat(argv[5],".entropy"));
+		write_entropy_matrix(entropy_fname);
 
-	char *entropy_fname = (char*)malloc(128*sizeof(char));
-	get_entropy_file_name(entropy_fname,argv[1]);
-	write_entropy_matrix(entropy_fname);
-
-	char measures[] = "measures.csv";
-	FILE* fp = fopen(measures,"a");
-	float entropy = compute_entropy();	
-	float purity = compute_purity();
-	printf("####################################################################  \n");
-	printf("Objective function value: %.6f ,Entropy: %.6f ,Purity: %.6f ,#Rows: %d ,#Columns: %d ,#NonZeros: %d, time(in secs): %.6lf\n",max_obj_value,entropy,purity,rowind,total_features,colind,t2-t1);
-	printf("####################################################################  \n");
-	fprintf(fp,"%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6lf\n",argv[1],clusters,trials,rowind,total_features,colind,entropy,purity,t2-t1);
+		float entropy = compute_entropy();	
+		float purity = compute_purity();
+		//Printing entropy matrix
+		for(i=0;i<clusters;i++)
+		{
+			for(j=0;j<total_classes;j++)
+				printf("%d ",entropy_matrix[i][j]);
+			printf("\n");
+		}
+	
+		printf("####################################################################  \n\n");
+		printf("Objective function value: %.6f ,Entropy: %.6f ,Purity: %.6f ,#Rows: %d ,#Columns: %d ,#NonZeros: %d, time(in secs): %.6lf\n",max_obj_value,entropy,purity,rowind,total_features,colind,t2-t1);
+		printf("\n####################################################################  \n\n");
+	}
+	else
+	{
+		printf("Wrong Input Format. Input format should be like 'input-file class-file #clusters #trials output-file'\n");
+	}
 	return 0;
 }
