@@ -4,6 +4,7 @@ from os import listdir,makedirs
 from os.path import isfile,join,exists
 from collections import defaultdict
 import math
+import re
 
 stop_words = ['a','about','above','across','after','again','against','all','almost','alone','along','already','also','although','always','among','an','and','another','any','anybody','anyone','anything','anywhere','are','area','areas','around','as','ask','asked','asking','asks','at','away','b','back','backed','backing','backs','be','became','because','become','becomes','been','before','began','behind','being','beings','best','better','between','big','both','but','by','c','came','can','cannot','case','cases','certain','certainly','clear','clearly','come','could','d','did','differ','different','differently','do','does','done','down','down','downed','downing','downs','during','e','each','early','either','end','ended','ending','ends','enough','even','evenly','ever','every','everybody','everyone','everything','everywhere','f','face','faces','fact','facts','far','felt','few','find','finds','first','for','four','from','full','fully','further','furthered','furthering','furthers','g','gave','general','generally','get','gets','give','given','gives','go','going','good','goods','got','great','greater','greatest','group','grouped','grouping','groups','h','had','has','have','having','he','her','here','herself','high','high','high','higher','highest','him','himself','his','how','however','i','if','important','in','interest','interested','interesting','interests','into','is','it','its','itself','j','just','k','keep','keeps','kind','knew','know','known','knows','l','large','largely','last','later','latest','least','less','let','lets','like','likely','long','longer','longest','m','made','make','making','man','many','may','me','member','members','men','might','more','most','mostly','mr','mrs','much','must','my','myself','n','necessary','need','needed','needing','needs','never','new','new','newer','newest','next','no','nobody','non','noone','not','nothing','now','nowhere','number','numbers','o','of','off','often','old','older','oldest','on','once','one','only','open','opened','opening','opens','or','order','ordered','ordering','orders','other','others','our','out','over','p','part','parted','parting','parts','per','perhaps','place','places','point','pointed','pointing','points','possible','present','presented','presenting','presents','problem','problems','put','puts','q','quite','r','rather','really','right','right','room','rooms','s','said','same','saw','say','says','second','seconds','see','seem','seemed','seeming','seems','sees','several','shall','she','should','show','showed','showing','shows','side','sides','since','small','smaller','smallest','so','some','somebody','someone','something','somewhere','state','states','still','still','such','sure','t','take','taken','than','that','the','their','them','then','there','therefore','these','they','thing','things','think','thinks','this','those','though','thought','thoughts','three','through','thus','to','today','together','too','took','toward','turn','turned','turning','turns','two','u','under','until','up','upon','us','use','used','uses','v','very','w','want','wanted','wanting','wants','was','way','ways','we','well','wells','went','were','what','when','where','whether','which','while','who','whole','whose','why','will','with','within','without','work','worked','working','works','would','x','y','year','years','yet','you','young','younger','youngest','your','yours','z']
 
@@ -51,11 +52,24 @@ Return Value:- Return True if it is valid posting else False
 """
 
 def is_original_posting(fname):
+	found_subject_tag = False
+	found_lines_tag = False
 	with open(fname,'r') as f:
 		for line in f:
 			line = line.lower()
+			
 			idx1 = line.find("subject:")
 			idx2 = line.find("re:")
+			idx3 = line.find("lines:")
+
+			if idx3 >= 0:
+				found_lines_tag = True
+				if not found_subject_tag:
+					return False
+
+			if 0 == idx1:
+				found_subject_tag = True
+
 			if 0 == idx1 and idx2 >=0:
 				return False
 	return True
@@ -69,16 +83,27 @@ def extract_text(fname):
 	base_idx = 8
 	result = []
 	should_include = False
+	req_lines = 0
+	clines = 0
 	with open(fname,'r') as f:
 		for line in f:
-			if not should_include:
-				idx1 = line.find("Subject:")
-				idx2 = line.find("subject:")
-				if 0 == idx1 or 0 == idx2:
-					result.append(line[base_idx:])
-					should_include = True
-			else:
+
+			line = line.lower()
+			idx1 = line.find("subject:")
+			
+			if req_lines == 0 and line.find("lines:")>=0:
+				tokens = line.split(":")
+				try:
+					req_lines = int(tokens[1].strip())
+				except:
+					req_lines = 0
+				should_include = True
+			elif idx1 >=0:
+				result.append(line[idx1 + base_idx:])
+			elif should_include:
+				if req_lines > clines:
 					result.append(line)
+				clines = clines+1
 	
 	return result
 		
@@ -94,7 +119,7 @@ Purpose:- Function that takes string as input and removes all non-alphanumeric c
 Return Value:- Returns string that only contains alpha numeric characters
 """
 def remove_non_alpha_numeric(line):
-	return ''.join([i if (i>='a' and i<='z') or (i>='0' and i<='9') else ' ' for i in line])
+	return re.sub('[^0-9a-z]+', ' ',line)
 
 """
 Purpose:- Entry point of pre-processing for line. Takes string as input and pre-processes it by applying above mentioned function
@@ -104,13 +129,13 @@ def pre_process(line):
 
 	result = []
 	line = remove_nonascii(line)
-	line = line.lower()
 	line = remove_non_alpha_numeric(line)
 	tokens = line.split(" ")
 	for tk in tokens:
 		tk = tk.strip()
-		if not unicode(tk,'utf-8').isnumeric() and len(tk) > 0 and tk not in stop_words:
-			result.append(tk)
+		if tk.isdigit() or len(tk) == 0 or tk in stop_words:
+			continue
+		result.append(tk)
 	return result
 	
 """
@@ -204,12 +229,13 @@ def normalize(word_dict,word_frequency,tag,clean_files,words):
 		result[k] = result_vect
 	return result
 
-def dump_to_input_file(base_dir,fname,word_dict,word_frequency,tag,clean_files,words):
+def dump_to_input_file(base_dir,fname,word_dict,word_frequency,tag,clean_files,words,use_tfidf=False):
 
 	if not exists(base_dir):
 		makedirs(base_dir)
 
-	word_dict = normalize(word_dict,word_frequency,tag,clean_files,words)
+	if use_tfidf:
+		word_dict = normalize(word_dict,word_frequency,tag,clean_files,words)
 	with open(join(base_dir,fname),'w') as f:
 		for k,v in word_dict.iteritems():
 			v.sort()
@@ -308,7 +334,7 @@ Parameters:- base_folder -> Directory from where to read the files
 			 feature_space -> dictionary whose key is ngram and value is all unqiue ngrams across all file in base_folder
 """
 
-def create_feature_vector(base_folder,output_base_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files):
+def create_feature_vector(base_folder,output_base_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files,use_tfidf):
 	
 	if not exists(output_base_dir):
 		makedirs(output_base_dir)		
@@ -335,13 +361,10 @@ def create_feature_vector(base_folder,output_base_dir,ngrams,file_bow_dict,featu
 		normalize_factor = 0
 		for k,v in word_count.iteritems():
 			if k in fv_dict:
-				normalize_factor = normalize_factor + v
-		for k,v in word_count.iteritems():
-			if k in fv_dict:
-				output_feature_vector[filename].append((fv_dict[k],(v*1.)/normalize_factor))
+				output_feature_vector[filename].append((fv_dict[k],v))
 
 	#Normalize and then write
-	dump_to_input_file(output_base_dir,'bag.csv',output_feature_vector,word_frequency,'bag',clean_files,feature_vector)	
+	dump_to_input_file(output_base_dir,'bag.csv',output_feature_vector,word_frequency,'bag',clean_files,feature_vector,use_tfidf)	
 
 	output_feature_space = {}
 	for ngram in ngrams:
@@ -357,25 +380,22 @@ def create_feature_vector(base_folder,output_base_dir,ngrams,file_bow_dict,featu
 			normalize_factor = 0
 			for k,v in ngram_count.iteritems():
 				if k in output_ngram_dict[ngram]:
-					normalize_factor = normalize_factor + v
-			for k,v in ngram_count.iteritems():
-				if k in output_ngram_dict[ngram]:
-					output_feature_space[ngram][filename].append((output_ngram_dict[ngram][k],(v*1.)/normalize_factor))
+					output_feature_space[ngram][filename].append((output_ngram_dict[ngram][k],v))
 
 	for k,v in output_feature_space.iteritems():
-		dump_to_input_file(output_base_dir,"char"+str(k)+".csv",output_feature_space[k],word_frequency,'char'+str(k),clean_files,feature_space[k])
+		dump_to_input_file(output_base_dir,"char"+str(k)+".csv",output_feature_space[k],word_frequency,'char'+str(k),clean_files,feature_space[k],use_tfidf)
 	
 total_args = len(sys.argv)
 base_folder = '20_newsgroups'
 ngrams = [3,5,7]
 output_dir = '.'
+use_tfidf = True
 
 if total_args >= 2:
-	base_folder = sys.argv[1]
-if total_args >= 3:
-	output_dir = sys.argv[2]
-if total_args >= 4:
-	ngrams = [int(sys.argv[3])]
+	if sys.argv[1].find("use_tfidf")>=0:
+		tokens = sys.argv[1].split("=")
+		if 2 == len(tokens) and "0" == tokens[1]:
+			use_tfidf = False
 
 file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files = generate_feature_space(base_folder,ngrams,output_dir)
-create_feature_vector(base_folder,output_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files)
+create_feature_vector(base_folder,output_dir,ngrams,file_bow_dict,feature_vector,file_ngram_dict,feature_space,class_map,word_frequency,clean_files,use_tfidf)
