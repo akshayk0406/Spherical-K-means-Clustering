@@ -463,34 +463,17 @@ void initClusteringParameters(int run)
 		for(j=rowptr[object_id];j<rowptr[object_id+1];j++) 
 			centroids[i][colptr[j]] = values[j];
 		normalize_incremental(i);
-		if(1==method) 
-		{
-			cluster_count[i] = 1;
-			cluster_map[object_id] = i;
-		}
 	}
 }
 
-void MovePoint(int cluster_id,int ptid,int fg)
-{
-	int j=0;
-	float p1 = 0;
-	int req_cc = cluster_count[cluster_id];
-
-	if(!fg) req_cc--;
-	else req_cc++;
-
-	for(j=rowptr[ptid];j<=rowptr[ptid+1];j++)
-	{
-		p1 = centroids[cluster_id][colptr[j]]*cluster_count[cluster_id];
-		if(!fg) p1 = p1 - values[j];
-		else p1 = p1 + values[j];
-		centroids[cluster_id][colptr[j]] = p1/req_cc;
-	}
-	cluster_count[cluster_id] = req_cc;
-	normalize_incremental(cluster_id);
-}
-
+/*
+:purpose
+	- Assignings Points to nearest cluster
+:param
+	- Iteration Id
+:result
+	- Returns number of objects that changed the cluster
+*/
 int clusterAssignment(int iter)
 {
 	int i=0,changes=0,cluster_id=0;
@@ -505,6 +488,10 @@ int clusterAssignment(int iter)
 	return changes;
 }
 
+/*
+:purpose
+	- Recomputing the centroids
+*/
 void ComputeCentroids()
 {
 	int i=0,j=0;
@@ -523,63 +510,55 @@ void ComputeCentroids()
 }
 
 /*
-:pupose
-	- to do the clustering using incremental kmeans
-:param
-	- run -> iteration id
+:purpose
+	- Get clusters with maximum points, this cluster will be splitted if there is any empty clusters
 :result
-	- value of objective function
+	- Cluster id with maximum
 */
-
-float incremental_kmeans(int run)
+int getMaximumClusterPoint()
 {
-	int cluster_id = 0;
-	int pre_cluster_id = 0;
-	srand(seeds[run]);
-	float cur_obj_value = 0.0;
-	float csum = 0.0;
-	float p1 = 0.0;
-	int i=0,j=0,k=0;
-	const int threshold = (0.1*(double)rowind)/100;
-
-	initClusteringParameters(run);
-
-	int changes = 0;
-	int shouldContinue = 0;
-
-	for(k=0;k<MAX_ITERATIONS;k++)
+	int i=0;
+	int max_point = 0;
+	int result = 0;
+	for(i=0;i<clusters;i++)
 	{
-		changes = 0;
-		shouldContinue = 0;
-		for(i=0;i<rowind;i++)
-		{	
-			shouldContinue = 0;
-			for(j=0;j<clusters && !shouldContinue;j++)
-				if(init_centroids[j] == i ) shouldContinue = 1;
-			if(shouldContinue) continue;
+		if(cluster_count[i] > max_point)
+		{
+			max_point = cluster_count[i];
+			result = i;	
+		}
+	}
+	return result;
+}
 
-			cluster_id = get_best_cluster(i);
-			cluster_map[i] = cluster_id;
-			if(0==k)
+/*
+:purpose
+	- Eliminate empty clusters by switching points from clusters with maximum number of points
+*/
+void EliminateEmptyClusters()
+{
+	int i=0,k=0,j=0;
+	int max_point_cluster = 0;
+	for(i=0;i<clusters;i++)
+	{
+		if(0==cluster_count[i])
+		{
+			assert(0);
+			max_point_cluster = getMaximumClusterPoint();
+			for(j=0;j<rowind && k < cluster_count[max_point_cluster];j++)
 			{
-				changes++;
-				MovePoint(cluster_id,i,1);
-			}
-			else
-			{
-				if(pre_cluster_map[i]!=cluster_map[i])
+				if(cluster_map[j] == max_point_cluster)
 				{
-					changes++;
-					MovePoint(pre_cluster_map[i],i,0);
-					MovePoint(cluster_id,i,1);
+					cluster_map[j] = i;
+					cluster_count[i] = cluster_count[i]+1;
+					cluster_count[max_point_cluster] = cluster_count[max_point_cluster]-1;
+					k++;
 				}
 			}
-			pre_cluster_map[i] = cluster_map[i];
 		}
-		if(changes<=threshold) break;
 	}
-	return evaluate_objective_function();
 }
+
 
 /*
 :pupose
@@ -604,6 +583,7 @@ float traditional_kmeans(int run)
 	for(k=0;k<MAX_ITERATIONS;k++)
 	{
 		changes = clusterAssignment(k);
+		EliminateEmptyClusters();
 		ComputeCentroids();
 		//Breaking when number of points changing centroids is less than certain threshold
 		if(changes<=threshold) break; 
@@ -660,21 +640,6 @@ char *get_entropy_file_name(char* entropy_fname,char *fname)
 	return entropy_fname;
 }
 
-/*
-:purpose
-	- setting clustering parameters
-:param
-	- command line arguments
-:result
-	- setting method variable to run incremental vs traditional kmeans
-*/
-void setParameters(char *params)
-{
-	method = 0;
-	if(strstr(params,"method") && strstr(params,"inc")) //doing incremental clustering
-		method = 1;
-}
-
 int main(int argc,char **argv)
 {
 	if(argc>=6)
@@ -691,15 +656,13 @@ int main(int argc,char **argv)
 		trials = atoi(argv[4]); //number of trials
 		
 		init();
-		if(argc>=7) setParameters(argv[6]);
 		normalize_points();	
 		gettimeofday (&tv1, NULL);
     	t1 = (double) (tv1.tv_sec) + 0.000001 * tv1.tv_usec;
 	
 		for(i=0;i<trials;i++)
 		{
-			if(!method) obj_value = traditional_kmeans(i);
-			else obj_value = incremental_kmeans(i);
+			obj_value = traditional_kmeans(i);
 			if(obj_value>max_obj_value)
 			{
 				max_obj_value = obj_value;
